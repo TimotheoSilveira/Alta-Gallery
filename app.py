@@ -4,10 +4,9 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 from google.oauth2.service_account import Credentials
-from google.auth.transport.requests import Request
-from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
 import io
-import base64
 
 # ===== CONFIGURAÇÃO =====
 st.set_page_config(
@@ -17,9 +16,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# ===== CONFIGURAÇÃO GOOGLE DRIVE =====
+GOOGLE_DRIVE_FOLDER_ID = "1HV2Vx93Pwcljccm1mrMNtUyIuo8n8t-f"  # ← SEU ID AQUI
+
 BULLS_FILE = "bulls_data.json"
 USERS_FILE = "users_data.json"
-GOOGLE_DRIVE_FOLDER_ID = ""  # Será preenchido após criar pasta no Google Drive
+CREDENTIALS_FILE = "credentials.json"  # Arquivo JSON do Google
 
 # ===== DADOS INICIAIS =====
 initial_bulls = [
@@ -31,7 +33,6 @@ initial_bulls = [
         "category": "Leite",
         "description": "Excelente produção de leite e conformação.",
         "bullImage": "",
-        "bullImageName": "",
         "daughters": []
     },
     {
@@ -42,7 +43,6 @@ initial_bulls = [
         "category": "Sólidos",
         "description": "Destaque para sólidos, fertilidade e vacas funcionais.",
         "bullImage": "",
-        "bullImageName": "",
         "daughters": []
     }
 ]
@@ -78,60 +78,58 @@ def save_users():
 def get_google_drive_service():
     """Retorna o serviço Google Drive autenticado"""
     try:
-        if "google_drive_service" not in st.session_state:
-            # Aqui você usaria as credenciais do Google
-            # Por enquanto, retornamos None
+        if not Path(CREDENTIALS_FILE).exists():
+            st.error("Arquivo credentials.json não encontrado!")
             return None
-        return st.session_state.google_drive_service
-    except:
+
+        credentials = Credentials.from_service_account_file(
+            CREDENTIALS_FILE,
+            scopes=['https://www.googleapis.com/auth/drive']
+        )
+        service = build('drive', 'v3', credentials=credentials)
+        return service
+    except Exception as e:
+        st.error(f"Erro ao conectar Google Drive: {e}")
         return None
 
-def upload_to_google_drive(file_bytes, filename, folder_id):
+def upload_to_google_drive(file_bytes, filename):
     """Faz upload de arquivo para Google Drive"""
     try:
-        from googleapiclient.discovery import build
-        from googleapiclient.http import MediaIoBaseUpload
-
         service = get_google_drive_service()
         if not service:
-            st.error("Google Drive não conectado!")
+            st.warning("Google Drive não disponível. Usando URL local.")
             return None
 
         file_metadata = {
             'name': filename,
-            'parents': [folder_id],
-            'mimeType': 'image/jpeg'
+            'parents': [GOOGLE_DRIVE_FOLDER_ID]
         }
 
-        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='image/jpeg')
+        media = MediaIoBaseUpload(
+            io.BytesIO(file_bytes),
+            mimetype='image/jpeg',
+            resumable=True
+        )
+
         file = service.files().create(
             body=file_metadata,
             media_body=media,
             fields='id, webViewLink'
         ).execute()
 
-        return file.get('webViewLink')
+        file_id = file.get('id')
+
+        # Tornar arquivo público
+        service.permissions().create(
+            fileId=file_id,
+            body={'type': 'anyone', 'role': 'reader'}
+        ).execute()
+
+        # Retornar link direto
+        return f"https://drive.google.com/uc?id={file_id}&export=download"
+
     except Exception as e:
-        st.error(f"Erro ao fazer upload: {e}")
-        return None
-
-def get_file_from_google_drive(file_id):
-    """Baixa arquivo do Google Drive"""
-    try:
-        from googleapiclient.discovery import build
-
-        service = get_google_drive_service()
-        if not service:
-            return None
-
-        request = service.files().get_media(fileId=file_id)
-        file = io.BytesIO()
-        downloader = MediaIoBaseDownload(file, request)
-        done = False
-        while not done:
-            status, done = downloader.next_chunk()
-        return file.getvalue()
-    except:
+        st.warning(f"Erro ao fazer upload: {e}")
         return None
 
 # ===== INICIALIZAR SESSION STATE =====
@@ -146,9 +144,6 @@ if "logged_in" not in st.session_state:
     st.session_state.user_email = ""
     st.session_state.user_name = ""
     st.session_state.user_role = "viewer"
-
-if "google_drive_connected" not in st.session_state:
-    st.session_state.google_drive_connected = False
 
 if "search_query" not in st.session_state:
     st.session_state.search_query = ""
@@ -179,11 +174,10 @@ def can_edit():
 def can_manage_users():
     return st.session_state.user_role == "admin"
 
-# ===== SIDEBAR - LOGIN E GOOGLE DRIVE =====
+# ===== SIDEBAR - LOGIN =====
 with st.sidebar:
     st.markdown("## 🔐 Área Restrita")
 
-    # ===== LOGIN =====
     if not st.session_state.logged_in:
         st.markdown("**Login para gerenciar dados**")
 
@@ -217,44 +211,6 @@ with st.sidebar:
 
         if st.button("🚪 Sair", use_container_width=True):
             st.session_state.logged_in = False
-            st.rerun()
-
-    st.divider()
-
-    # ===== GOOGLE DRIVE =====
-    st.markdown("## ☁️ Google Drive")
-
-    if not st.session_state.google_drive_connected:
-        st.markdown("**Conectar ao Google Drive**")
-        st.info("As fotos serão salvas no seu Google Drive")
-
-        if st.button("🔗 Conectar Google Drive", use_container_width=True):
-            st.markdown("""
-            ### Como Conectar:
-
-            1. Acesse: https://console.cloud.google.com
-            2. Crie um novo projeto
-            3. Ative a API do Google Drive
-            4. Crie uma credencial (Service Account)
-            5. Baixe o arquivo JSON
-            6. Cole o conteúdo abaixo:
-            """)
-
-            credentials_json = st.text_area("Cole o JSON das credenciais aqui")
-
-            if st.button("✅ Conectar"):
-                try:
-                    creds = json.loads(credentials_json)
-                    st.session_state.google_drive_connected = True
-                    st.session_state.google_drive_creds = creds
-                    st.success("Google Drive conectado!")
-                    st.rerun()
-                except:
-                    st.error("JSON inválido")
-    else:
-        st.success("✅ Google Drive Conectado")
-        if st.button("🔌 Desconectar", use_container_width=True):
-            st.session_state.google_drive_connected = False
             st.rerun()
 
 # ===== PÁGINA PRINCIPAL =====
@@ -411,15 +367,13 @@ if st.session_state.logged_in and can_edit():
 
             if st.form_submit_button("💾 Salvar Touro"):
                 if name and code:
-                    # Processar imagem
                     bull_image = ""
 
-                    if bull_image_file and st.session_state.google_drive_connected:
+                    if bull_image_file:
                         st.info("Fazendo upload para Google Drive...")
                         bull_image = upload_to_google_drive(
                             bull_image_file.getvalue(),
-                            f"{code}_bull.jpg",
-                            GOOGLE_DRIVE_FOLDER_ID
+                            f"{code}_bull.jpg"
                         )
                         if not bull_image:
                             bull_image = bull_image_url
@@ -434,7 +388,6 @@ if st.session_state.logged_in and can_edit():
                         "category": category,
                         "description": description,
                         "bullImage": bull_image or "",
-                        "bullImageName": bull_image_file.name if bull_image_file else "",
                         "daughters": []
                     }
                     st.session_state.bulls.insert(0, new_bull)
