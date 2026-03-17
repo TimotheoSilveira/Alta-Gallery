@@ -3,8 +3,6 @@ import json
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
-import base64
-from io import BytesIO
 
 # ===== CONFIGURAÇÃO DA PÁGINA =====
 st.set_page_config(
@@ -19,13 +17,6 @@ st.markdown("""
 <style>
     .main { padding: 2rem; }
     .stTabs [data-baseweb="tab-list"] button { font-size: 16px; }
-    .metric-card { 
-        background: linear-gradient(135deg, #0b57b7, #2da6ff);
-        color: white;
-        padding: 20px;
-        border-radius: 10px;
-        text-align: center;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -66,6 +57,43 @@ initial_bulls = [
     }
 ]
 
+# ===== FUNÇÕES DE ARMAZENAMENTO (ANTES DO SESSION STATE) =====
+def load_bulls():
+    """Carrega touros do arquivo JSON ou retorna dados iniciais"""
+    try:
+        if Path(BULLS_FILE).exists():
+            with open(BULLS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        st.warning(f"Erro ao carregar touros: {e}")
+    return initial_bulls
+
+def save_bulls():
+    """Salva touros no arquivo JSON"""
+    try:
+        with open(BULLS_FILE, "w", encoding="utf-8") as f:
+            json.dump(st.session_state.bulls, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.error(f"Erro ao salvar touros: {e}")
+
+def load_users():
+    """Carrega usuários do arquivo JSON"""
+    try:
+        if Path(USERS_FILE).exists():
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        st.warning(f"Erro ao carregar usuários: {e}")
+    return []
+
+def save_users():
+    """Salva usuários no arquivo JSON"""
+    try:
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(st.session_state.users, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.error(f"Erro ao salvar usuários: {e}")
+
 # ===== INICIALIZAR SESSION STATE =====
 if "bulls" not in st.session_state:
     st.session_state.bulls = load_bulls()
@@ -88,29 +116,63 @@ if "search_query" not in st.session_state:
 if "breed_filter" not in st.session_state:
     st.session_state.breed_filter = "Todas as raças"
 
-# ===== FUNÇÕES DE ARMAZENAMENTO =====
-def load_bulls():
-    if Path(BULLS_FILE).exists():
-        with open(BULLS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return initial_bulls
+# ===== FUNÇÕES AUXILIARES =====
+def get_breeds():
+    """Retorna lista de raças dos touros"""
+    breeds = set(bull["breed"] for bull in st.session_state.bulls)
+    return ["Todas as raças"] + sorted(list(breeds))
 
-def save_bulls():
-    with open(BULLS_FILE, "w", encoding="utf-8") as f:
-        json.dump(st.session_state.bulls, f, ensure_ascii=False, indent=2)
+def get_filtered_bulls():
+    """Filtra touros por busca e raça"""
+    filtered = st.session_state.bulls
 
-def load_users():
-    if Path(USERS_FILE).exists():
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
+    if st.session_state.search_query:
+        query = st.session_state.search_query.lower()
+        filtered = [b for b in filtered if query in b["name"].lower() or query in b["code"].lower()]
 
-def save_users():
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(st.session_state.users, f, ensure_ascii=False, indent=2)
+    if st.session_state.breed_filter != "Todas as raças":
+        filtered = [b for b in filtered if b["breed"] == st.session_state.breed_filter]
+
+    return filtered
+
+def can_edit():
+    """Verifica se usuário pode editar"""
+    return st.session_state.user_role in ["editor", "admin"]
+
+def can_manage_users():
+    """Verifica se usuário pode gerenciar outros usuários"""
+    return st.session_state.user_role == "admin"
+
+# ===== PÁGINA DE LOGIN =====
+def login_page():
+    col1, col2, col3 = st.columns([1, 2, 1])
+
+    with col2:
+        st.markdown("# 🐄 Alta Gallery")
+        st.markdown("**Entrar no sistema**")
+        st.markdown("Acesso liberado para e-mails com final @altagenetics.com")
+
+        tab1, tab2 = st.tabs(["Entrar", "Criar cadastro"])
+
+        with tab1:
+            email = st.text_input("E-mail corporativo", placeholder="seu.nome@altagenetics.com")
+            password = st.text_input("Senha", type="password")
+
+            if st.button("🔓 Acessar", use_container_width=True):
+                handle_login(email, password)
+
+        with tab2:
+            name = st.text_input("Nome completo")
+            email_reg = st.text_input("E-mail corporativo", placeholder="seu.nome@altagenetics.com", key="reg_email")
+            password_reg = st.text_input("Senha", type="password", key="reg_password")
+            confirm_password = st.text_input("Confirmar senha", type="password")
+
+            if st.button("📝 Criar cadastro", use_container_width=True):
+                handle_register(name, email_reg, password_reg, confirm_password)
 
 # ===== FUNÇÕES DE AUTENTICAÇÃO =====
 def handle_login(email, password):
+    """Processa login do usuário"""
     email = email.strip().lower()
 
     if not email.endswith("@altagenetics.com"):
@@ -135,6 +197,7 @@ def handle_login(email, password):
     st.rerun()
 
 def handle_register(name, email, password, confirm_password):
+    """Processa registro de novo usuário"""
     email = email.strip().lower()
 
     if not name or not email or not password:
@@ -164,61 +227,12 @@ def handle_register(name, email, password, confirm_password):
     st.success("Cadastro realizado! Agora faça login.")
 
 def handle_logout():
+    """Processa logout do usuário"""
     st.session_state.logged_in = False
     st.session_state.user_email = ""
     st.session_state.user_name = ""
     st.session_state.user_role = "viewer"
     st.rerun()
-
-# ===== FUNÇÕES AUXILIARES =====
-def get_breeds():
-    breeds = set(bull["breed"] for bull in st.session_state.bulls)
-    return ["Todas as raças"] + sorted(list(breeds))
-
-def get_filtered_bulls():
-    filtered = st.session_state.bulls
-
-    if st.session_state.search_query:
-        query = st.session_state.search_query.lower()
-        filtered = [b for b in filtered if query in b["name"].lower() or query in b["code"].lower()]
-
-    if st.session_state.breed_filter != "Todas as raças":
-        filtered = [b for b in filtered if b["breed"] == st.session_state.breed_filter]
-
-    return filtered
-
-def can_edit():
-    return st.session_state.user_role in ["editor", "admin"]
-
-def can_manage_users():
-    return st.session_state.user_role == "admin"
-
-# ===== PÁGINA DE LOGIN =====
-def login_page():
-    col1, col2, col3 = st.columns([1, 2, 1])
-
-    with col2:
-        st.markdown("# 🐄 Alta Gallery")
-        st.markdown("**Entrar no sistema**")
-        st.markdown("Acesso liberado para e-mails com final @altagenetics.com")
-
-        tab1, tab2 = st.tabs(["Entrar", "Criar cadastro"])
-
-        with tab1:
-            email = st.text_input("E-mail corporativo", placeholder="seu.nome@altagenetics.com")
-            password = st.text_input("Senha", type="password")
-
-            if st.button("🔓 Acessar", use_container_width=True):
-                handle_login(email, password)
-
-        with tab2:
-            name = st.text_input("Nome completo")
-            email_reg = st.text_input("E-mail corporativo", placeholder="seu.nome@altagenetics.com", key="reg_email")
-            password_reg = st.text_input("Senha", type="password", key="reg_password")
-            confirm_password = st.text_input("Confirmar senha", type="password")
-
-            if st.button("📝 Criar cadastro", use_container_width=True):
-                handle_register(name, email_reg, password_reg, confirm_password)
 
 # ===== PÁGINA DO DASHBOARD =====
 def dashboard_page():
@@ -260,8 +274,6 @@ def dashboard_page():
     # Abas
     if can_edit():
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Galeria", "➕ Adicionar Touro", "📥 Importar", "📤 Exportar", "⚙️ Gerenciar"])
-    elif can_manage_users():
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Galeria", "📥 Importar", "📤 Exportar", "⚙️ Gerenciar Usuários", "❌ Sair"])
     else:
         tab1 = st.tabs(["📊 Galeria"])[0]
 
@@ -277,13 +289,6 @@ def dashboard_page():
             export_tab()
         with tab5:
             manage_tab()
-    elif can_manage_users():
-        with tab2:
-            import_tab()
-        with tab3:
-            export_tab()
-        with tab4:
-            manage_users_tab()
 
 # ===== ABAS DO DASHBOARD =====
 def gallery_tab():
@@ -478,33 +483,6 @@ def manage_tab():
     st.markdown("### Touros cadastrados:")
     for bull in st.session_state.bulls:
         st.write(f"- **{bull['name']}** ({bull['code']}) - {len(bull['daughters'])} fotos")
-
-def manage_users_tab():
-    st.markdown("## Gerenciar Usuários")
-
-    for user in st.session_state.users:
-        col1, col2, col3 = st.columns([2, 1, 1])
-
-        with col1:
-            st.write(f"**{user['name']}** ({user['email']})")
-
-        with col2:
-            new_role = st.selectbox(
-                "Papel",
-                ["viewer", "editor", "admin"],
-                index=["viewer", "editor", "admin"].index(user["role"]),
-                key=f"role_{user['id']}"
-            )
-            if new_role != user["role"]:
-                user["role"] = new_role
-                save_users()
-                st.rerun()
-
-        with col3:
-            if st.button("🗑️ Remover", key=f"delete_user_{user['id']}"):
-                st.session_state.users = [u for u in st.session_state.users if u["id"] != user["id"]]
-                save_users()
-                st.rerun()
 
 # ===== EXECUTAR APP =====
 if st.session_state.logged_in:
