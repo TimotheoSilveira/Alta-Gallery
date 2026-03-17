@@ -3,8 +3,11 @@ import json
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
+from google.oauth2.service_account import Credentials
+from google.auth.transport.requests import Request
+from google.oauth2 import service_account
+import io
 import base64
-from io import BytesIO
 
 # ===== CONFIGURAÇÃO =====
 st.set_page_config(
@@ -16,6 +19,7 @@ st.set_page_config(
 
 BULLS_FILE = "bulls_data.json"
 USERS_FILE = "users_data.json"
+GOOGLE_DRIVE_FOLDER_ID = ""  # Será preenchido após criar pasta no Google Drive
 
 # ===== DADOS INICIAIS =====
 initial_bulls = [
@@ -26,18 +30,9 @@ initial_bulls = [
         "breed": "Holandês",
         "category": "Leite",
         "description": "Excelente produção de leite e conformação.",
-        "bullImage": "https://images.unsplash.com/photo-1517849845537-4d257902454a?auto=format&fit=crop&w=900&q=80",
-        "daughters": [
-            {
-                "id": 101,
-                "cowName": "Vaca 4021",
-                "farm": "Fazenda Boa Vista",
-                "location": "Varginha / MG",
-                "milk": "42 kg/dia",
-                "lactation": "2ª lactação",
-                "image": "https://images.unsplash.com/photo-1516467508483-a7212febe31a?auto=format&fit=crop&w=1200&q=80"
-            }
-        ]
+        "bullImage": "",
+        "bullImageName": "",
+        "daughters": []
     },
     {
         "id": 2,
@@ -46,12 +41,13 @@ initial_bulls = [
         "breed": "Jersey",
         "category": "Sólidos",
         "description": "Destaque para sólidos, fertilidade e vacas funcionais.",
-        "bullImage": "https://images.unsplash.com/photo-1493962853295-0fd70327578a?auto=format&fit=crop&w=900&q=80",
+        "bullImage": "",
+        "bullImageName": "",
         "daughters": []
     }
 ]
 
-# ===== FUNÇÕES DE ARMAZENAMENTO =====
+# ===== FUNÇÕES DE ARMAZENAMENTO LOCAL =====
 def load_bulls():
     try:
         if Path(BULLS_FILE).exists():
@@ -78,6 +74,66 @@ def save_users():
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(st.session_state.users, f, ensure_ascii=False, indent=2)
 
+# ===== FUNÇÕES GOOGLE DRIVE =====
+def get_google_drive_service():
+    """Retorna o serviço Google Drive autenticado"""
+    try:
+        if "google_drive_service" not in st.session_state:
+            # Aqui você usaria as credenciais do Google
+            # Por enquanto, retornamos None
+            return None
+        return st.session_state.google_drive_service
+    except:
+        return None
+
+def upload_to_google_drive(file_bytes, filename, folder_id):
+    """Faz upload de arquivo para Google Drive"""
+    try:
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseUpload
+
+        service = get_google_drive_service()
+        if not service:
+            st.error("Google Drive não conectado!")
+            return None
+
+        file_metadata = {
+            'name': filename,
+            'parents': [folder_id],
+            'mimeType': 'image/jpeg'
+        }
+
+        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='image/jpeg')
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, webViewLink'
+        ).execute()
+
+        return file.get('webViewLink')
+    except Exception as e:
+        st.error(f"Erro ao fazer upload: {e}")
+        return None
+
+def get_file_from_google_drive(file_id):
+    """Baixa arquivo do Google Drive"""
+    try:
+        from googleapiclient.discovery import build
+
+        service = get_google_drive_service()
+        if not service:
+            return None
+
+        request = service.files().get_media(fileId=file_id)
+        file = io.BytesIO()
+        downloader = MediaIoBaseDownload(file, request)
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+        return file.getvalue()
+    except:
+        return None
+
 # ===== INICIALIZAR SESSION STATE =====
 if "bulls" not in st.session_state:
     st.session_state.bulls = load_bulls()
@@ -90,6 +146,9 @@ if "logged_in" not in st.session_state:
     st.session_state.user_email = ""
     st.session_state.user_name = ""
     st.session_state.user_role = "viewer"
+
+if "google_drive_connected" not in st.session_state:
+    st.session_state.google_drive_connected = False
 
 if "search_query" not in st.session_state:
     st.session_state.search_query = ""
@@ -120,10 +179,11 @@ def can_edit():
 def can_manage_users():
     return st.session_state.user_role == "admin"
 
-# ===== SIDEBAR - LOGIN =====
+# ===== SIDEBAR - LOGIN E GOOGLE DRIVE =====
 with st.sidebar:
     st.markdown("## 🔐 Área Restrita")
 
+    # ===== LOGIN =====
     if not st.session_state.logged_in:
         st.markdown("**Login para gerenciar dados**")
 
@@ -150,16 +210,51 @@ with st.sidebar:
                     st.success("Login realizado!")
                     st.rerun()
                 else:
-                    st.info("Usuário não encontrado. Solicite acesso ao admin.")
+                    st.info("Usuário não encontrado.")
     else:
         st.success(f"✅ **{st.session_state.user_name}**")
         st.markdown(f"**Papel:** {st.session_state.user_role.upper()}")
 
         if st.button("🚪 Sair", use_container_width=True):
             st.session_state.logged_in = False
-            st.session_state.user_email = ""
-            st.session_state.user_name = ""
-            st.session_state.user_role = "viewer"
+            st.rerun()
+
+    st.divider()
+
+    # ===== GOOGLE DRIVE =====
+    st.markdown("## ☁️ Google Drive")
+
+    if not st.session_state.google_drive_connected:
+        st.markdown("**Conectar ao Google Drive**")
+        st.info("As fotos serão salvas no seu Google Drive")
+
+        if st.button("🔗 Conectar Google Drive", use_container_width=True):
+            st.markdown("""
+            ### Como Conectar:
+
+            1. Acesse: https://console.cloud.google.com
+            2. Crie um novo projeto
+            3. Ative a API do Google Drive
+            4. Crie uma credencial (Service Account)
+            5. Baixe o arquivo JSON
+            6. Cole o conteúdo abaixo:
+            """)
+
+            credentials_json = st.text_area("Cole o JSON das credenciais aqui")
+
+            if st.button("✅ Conectar"):
+                try:
+                    creds = json.loads(credentials_json)
+                    st.session_state.google_drive_connected = True
+                    st.session_state.google_drive_creds = creds
+                    st.success("Google Drive conectado!")
+                    st.rerun()
+                except:
+                    st.error("JSON inválido")
+    else:
+        st.success("✅ Google Drive Conectado")
+        if st.button("🔌 Desconectar", use_container_width=True):
+            st.session_state.google_drive_connected = False
             st.rerun()
 
 # ===== PÁGINA PRINCIPAL =====
@@ -167,7 +262,7 @@ st.markdown("# 🐄 Alta Gallery")
 st.markdown("Galeria de touros e progênie Alta Genetics")
 st.divider()
 
-# ===== ESTATÍSTICAS (VISÍVEL PARA TODOS) =====
+# ===== ESTATÍSTICAS =====
 col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("Touros", len(st.session_state.bulls))
@@ -179,7 +274,7 @@ with col3:
 
 st.divider()
 
-# ===== FILTROS (VISÍVEL PARA TODOS) =====
+# ===== FILTROS =====
 col1, col2 = st.columns([3, 1])
 with col1:
     st.session_state.search_query = st.text_input("🔎 Buscar por nome ou código", st.session_state.search_query)
@@ -261,7 +356,8 @@ with tab1:
                     cols = st.columns(3)
                     for idx, photo in enumerate(bull["daughters"]):
                         with cols[idx % 3]:
-                            st.image(photo["image"], use_container_width=True)
+                            if photo.get("image"):
+                                st.image(photo["image"], use_container_width=True)
                             st.markdown(f"**{photo['cowName']}**")
                             st.markdown(f"🏠 {photo['farm']}")
                             st.markdown(f"📍 {photo['location']}")
@@ -270,12 +366,13 @@ with tab1:
 
                             col_download, col_delete = st.columns(2)
                             with col_download:
-                                st.download_button(
-                                    "📥 Baixar",
-                                    data=photo["image"],
-                                    file_name=f"{photo['cowName']}.jpg",
-                                    key=f"download_{photo['id']}"
-                                )
+                                if photo.get("image"):
+                                    st.download_button(
+                                        "📥 Baixar",
+                                        data=photo["image"],
+                                        file_name=f"{photo['cowName']}.jpg",
+                                        key=f"download_{photo['id']}"
+                                    )
                             if can_edit():
                                 with col_delete:
                                     if st.button("🗑️", key=f"delete_photo_{photo['id']}"):
@@ -303,10 +400,32 @@ if st.session_state.logged_in and can_edit():
                 category = st.text_input("Categoria")
                 description = st.text_area("Descrição genética")
 
-            bull_image_url = st.text_input("URL da foto do touro")
+            st.markdown("**Foto do Touro**")
+            col_url, col_upload = st.columns(2)
+
+            with col_url:
+                bull_image_url = st.text_input("URL da foto")
+
+            with col_upload:
+                bull_image_file = st.file_uploader("Ou upload da foto", type=["jpg", "jpeg", "png"], key="bull_photo")
 
             if st.form_submit_button("💾 Salvar Touro"):
                 if name and code:
+                    # Processar imagem
+                    bull_image = ""
+
+                    if bull_image_file and st.session_state.google_drive_connected:
+                        st.info("Fazendo upload para Google Drive...")
+                        bull_image = upload_to_google_drive(
+                            bull_image_file.getvalue(),
+                            f"{code}_bull.jpg",
+                            GOOGLE_DRIVE_FOLDER_ID
+                        )
+                        if not bull_image:
+                            bull_image = bull_image_url
+                    else:
+                        bull_image = bull_image_url
+
                     new_bull = {
                         "id": int(datetime.now().timestamp() * 1000),
                         "name": name,
@@ -314,7 +433,8 @@ if st.session_state.logged_in and can_edit():
                         "breed": breed,
                         "category": category,
                         "description": description,
-                        "bullImage": bull_image_url or "https://via.placeholder.com/300",
+                        "bullImage": bull_image or "",
+                        "bullImageName": bull_image_file.name if bull_image_file else "",
                         "daughters": []
                     }
                     st.session_state.bulls.insert(0, new_bull)
