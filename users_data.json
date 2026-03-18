@@ -1,9 +1,0 @@
-[
-  {
-    "id": 1000,
-    "name": "Timotheo Admin",
-    "email": "timotheo@altagenetics.com",
-    "password": "admin123",
-    "role": "admin"
-  }
-]
