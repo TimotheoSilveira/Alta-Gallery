@@ -217,7 +217,7 @@ with st.sidebar:
 
         if st.button("🔓 Acessar", use_container_width=True):
             email = email.strip().lower()
-            password = password.strip()  # ← ADICIONE ISTO
+            password = password.strip()
 
             if not email.endswith("@altagenetics.com"):
                 st.error("❌ Use e-mail @altagenetics.com")
@@ -228,19 +228,8 @@ with st.sidebar:
 
                 if not user:
                     st.error("❌ Usuário não encontrado")
-                    st.info(f"📋 Usuários cadastrados: {len(st.session_state.users)}")
-                    # Debug: mostrar usuários
-                    with st.expander("🔍 Debug - Ver usuários"):
-                        for u in st.session_state.users:
-                            st.write(f"E-mail: {u['email']} | Senha: {u['password']}")
                 elif user["password"] != password:
                     st.error("❌ Senha incorreta")
-                    # Debug
-                    with st.expander("🔍 Debug - Verificar senha"):
-                        st.write(f"Senha digitada: '{password}'")
-                        st.write(f"Senha no sistema: '{user['password']}'")
-                        st.write(f"Tamanho digitado: {len(password)}")
-                        st.write(f"Tamanho no sistema: {len(user['password'])}")
                 else:
                     st.session_state.logged_in = True
                     st.session_state.user_email = email
