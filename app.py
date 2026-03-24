@@ -25,9 +25,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CONFIGURAÇÃO DO GOOGLE DRIVE
-GOOGLE_DRIVE_FOLDER_ID = "1A2B3C4D5E6F7G8H9I0J1K2L3M4N5O6P7"  # SUBSTITUA PELO SEU ID
-CREDENTIALS_FILE = "credentials.json"
+# CONFIGURAÇÃO DO GOOGLE DRIVE (usando Streamlit Secrets)
+GOOGLE_DRIVE_FOLDER_ID = st.secrets.get("google_drive_folder_id", "")
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
 # ============================================================================
@@ -103,16 +102,19 @@ if "bulls" not in st.session_state:
 
 @st.cache_resource
 def get_drive_service():
-    """Retorna serviço autenticado do Google Drive"""
+    """Retorna serviço autenticado do Google Drive usando Streamlit Secrets"""
     if not GOOGLE_DRIVE_AVAILABLE:
         return None
 
-    if not Path(CREDENTIALS_FILE).exists():
-        return None
-
     try:
-        credentials = Credentials.from_service_account_file(
-            CREDENTIALS_FILE,
+        # Obter credenciais do Streamlit Secrets
+        service_account_info = st.secrets.get("google_service_account")
+
+        if not service_account_info:
+            return None
+
+        credentials = Credentials.from_service_account_info(
+            service_account_info,
             scopes=SCOPES
         )
         service = build('drive', 'v3', credentials=credentials)
@@ -126,7 +128,7 @@ def upload_photo_to_google_drive(file_content, filename, folder_id=GOOGLE_DRIVE_
     service = get_drive_service()
 
     if not service:
-        st.error("Google Drive não configurado. Verifique credentials.json")
+        st.error("Google Drive não configurado. Verifique Streamlit Secrets")
         return None
 
     try:
@@ -159,7 +161,7 @@ def upload_photo_to_google_drive(file_content, filename, folder_id=GOOGLE_DRIVE_
                 body={'type': 'anyone', 'role': 'reader'}
             ).execute()
         except:
-            pass  # Se falhar, tenta acessar mesmo assim
+            pass
 
         # Retornar URL pública
         return f"https://drive.google.com/uc?export=view&id={file_id}"
@@ -396,4 +398,5 @@ with st.sidebar:
         st.warning("⚠️ Bibliotecas do Google não instaladas")
 
     st.markdown(f"**ID da Pasta:** `{GOOGLE_DRIVE_FOLDER_ID}`")
-    st.markdown(f"[Abrir Google Drive](https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}?usp=sharing)")
+    if GOOGLE_DRIVE_FOLDER_ID:
+        st.markdown(f"[Abrir Google Drive](https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}?usp=sharing)")
