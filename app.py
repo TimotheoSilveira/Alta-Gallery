@@ -71,10 +71,8 @@ INITIAL_BULLS = [
     }
 ]
 
-INITIAL_USERS = []
-
 # ============================================================================
-# INICIALIZAR SESSION STATE
+# INICIALIZAR SESSION STATE - TUDO AQUI!
 # ============================================================================
 
 if "loggedIn" not in st.session_state:
@@ -92,6 +90,8 @@ if "loggedIn" not in st.session_state:
     st.session_state.showRegister = False
     st.session_state.showEditBullPhoto = False
     st.session_state.showExport = False
+    st.session_state.showImport = False
+    st.session_state.mobileMenuOpen = False
     st.session_state.exportSelection = []
 
 # ============================================================================
@@ -112,7 +112,7 @@ def load_users():
     if Path("users_data.json").exists():
         with open("users_data.json", "r", encoding="utf-8") as f:
             return json.load(f)
-    return INITIAL_USERS.copy()
+    return []
 
 def save_users():
     with open("users_data.json", "w", encoding="utf-8") as f:
@@ -157,7 +157,6 @@ if not st.session_state.users:
 # ============================================================================
 
 if not st.session_state.loggedIn:
-    st.markdown("---")
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
@@ -168,11 +167,11 @@ if not st.session_state.loggedIn:
         with st.form("login_form"):
             email = st.text_input("E-mail corporativo", placeholder="seu.nome@altagenetics.com")
             password = st.text_input("Senha", type="password", placeholder="Digite sua senha")
-            col1, col2 = st.columns(2)
 
-            with col1:
+            col_a, col_b = st.columns(2)
+            with col_a:
                 submit = st.form_submit_button("Acessar", use_container_width=True)
-            with col2:
+            with col_b:
                 register = st.form_submit_button("Criar cadastro", use_container_width=True)
 
             if submit:
@@ -292,14 +291,18 @@ else:
         )
 
     with col3:
-        col_a, col_b = st.columns(2)
+        col_a, col_b, col_c = st.columns(3)
         with col_a:
-            if st.button("➕ Touro", use_container_width=True):
+            if st.button("➕", use_container_width=True, help="Adicionar touro"):
                 st.session_state.showAddBull = True
                 st.rerun()
         with col_b:
-            if st.button("📤 Exportar", use_container_width=True):
+            if st.button("📤", use_container_width=True, help="Exportar"):
                 st.session_state.showExport = True
+                st.rerun()
+        with col_c:
+            if st.button("📥", use_container_width=True, help="Importar"):
+                st.session_state.showImport = True
                 st.rerun()
 
     st.divider()
@@ -314,7 +317,7 @@ else:
                 code = st.text_input("Código")
             with col2:
                 breed = st.selectbox("Raça", ["Holandês", "Jersey", "Girolando", "Gir Leiteiro"])
-                category = st.text_input("Categoria", placeholder="Ex.: Leite, Sólidos")
+                category = st.text_input("Categoria", placeholder="Ex.: Leite, Sólidos, Tropical")
 
             description = st.text_area("Descrição genética", placeholder="Resumo opcional")
 
@@ -322,13 +325,14 @@ else:
             with col1:
                 bull_image_url = st.text_input("URL da foto do touro")
             with col2:
-                bull_file = st.file_uploader("Upload da foto", type=["jpg", "jpeg", "png"], key="add_bull_photo")
+                bull_file = st.file_uploader("Upload da foto do touro", type=["jpg", "jpeg", "png"], key="add_bull_photo")
 
             if st.form_submit_button("Salvar touro"):
                 if not name or not code:
                     st.error("Preencha nome e código")
                 else:
                     bull_image = ""
+
                     if bull_file:
                         bull_image = base64.b64encode(bull_file.read()).decode()
                         bull_image = f"data:image/png;base64,{bull_image}"
@@ -348,11 +352,34 @@ else:
                     st.session_state.bulls.insert(0, new_bull)
                     save_bulls()
                     st.session_state.showAddBull = False
-                    st.success("Touro adicionado!")
+                    st.success("Touro adicionado com sucesso!")
                     st.rerun()
 
         if st.button("Fechar"):
             st.session_state.showAddBull = False
+            st.rerun()
+
+    # Modal: Importar
+    if st.session_state.showImport:
+        st.markdown("### Importar base em JSON")
+        json_file = st.file_uploader("Arquivo JSON", type=["json"], key="import_file")
+
+        if json_file:
+            try:
+                imported_data = json.load(json_file)
+                if isinstance(imported_data, list):
+                    st.session_state.bulls = imported_data
+                    save_bulls()
+                    st.success("Dados importados com sucesso!")
+                    st.session_state.showImport = False
+                    st.rerun()
+                else:
+                    st.error("Arquivo JSON inválido")
+            except:
+                st.error("Erro ao processar arquivo JSON")
+
+        if st.button("Fechar importação"):
+            st.session_state.showImport = False
             st.rerun()
 
     # Modal: Exportar
