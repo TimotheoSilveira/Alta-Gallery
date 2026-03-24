@@ -569,7 +569,7 @@ else:
             st.session_state.showAddBull = False
             st.rerun()
 
-    # Modal: Importar
+      # Modal: Importar
     if st.session_state.get("showImport", False):
         st.markdown("### Importar base em JSON")
         json_file = st.file_uploader("Arquivo JSON", type=["json"])
@@ -727,7 +727,133 @@ else:
         if st.session_state.get("showEditBullPhoto", False):
             st.markdown("### Editar foto do touro")
             with st.form("edit_bull_photo_form"):
-                new_url = st.text_input("
+                new_url = st.text_input("Nova URL da foto")
+                new_file = st.file_uploader("Upload da nova foto", type=["jpg", "jpeg", "png"], key="edit_bull_photo")
 
+                if st.form_submit_button("Salvar foto do touro"):
+                    if new_file and st.session_state.github_token:
+                        with st.spinner("Enviando imagem para GitHub..."):
+                            filename = f"bulls/{int(datetime.now().timestamp())}-{new_file.name}"
+                            new_image = upload_image_to_github(
+                                new_file.read(),
+                                filename,
+                                st.session_state.github_token,
+                                st.session_state.github_repo_owner,
+                                st.session_state.github_repo_name
+                            )
+                            if new_image:
+                                selected_bull["bullImage"] = new_image
+                                save_data()
+                                st.session_state.showEditBullPhoto = False
+                                st.success("Foto do touro atualizada!")
+                                st.rerun()
+                    elif new_file:
+                        st.warning("GitHub não configurado. Usando base64 local.")
+                        selected_bull["bullImage"] = base64.b64encode(new_file.read()).decode()
+                        selected_bull["bullImage"] = f"data:image/png;base64,{selected_bull['bullImage']}"
+                        save_data()
+                        st.session_state.showEditBullPhoto = False
+                        st.success("Foto do touro atualizada!")
+                        st.rerun()
+                    elif new_url:
+                        selected_bull["bullImage"] = new_url
+                        save_data()
+                        st.session_state.showEditBullPhoto = False
+                        st.success("Foto do touro atualizada!")
+                        st.rerun()
+                    else:
+                        st.error("Informe uma URL ou faça upload de uma imagem")
 
+            if st.button("Apagar foto do touro"):
+                selected_bull["bullImage"] = ""
+                save_data()
+                st.session_state.showEditBullPhoto = False
+                st.success("Foto removida!")
+                st.rerun()
 
+        # Modal: Adicionar foto de filha
+        if st.session_state.get("showAddPhoto", False):
+            st.markdown("### Adicionar foto de filha")
+            with st.form("add_photo_form"):
+                cow_name = st.text_input("Nome ou número da vaca")
+                col1, col2 = st.columns(2)
+                with col1:
+                    farm = st.text_input("Fazenda")
+                with col2:
+                    location = st.text_input("Cidade / Estado")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    milk = st.text_input("Produção de leite (opcional)")
+                with col2:
+                    lactation = st.text_input("Lactação (opcional)")
+
+                image_url = st.text_input("URL da imagem")
+                image_file = st.file_uploader("Upload da imagem", type=["jpg", "jpeg", "png"], key="add_photo_file")
+
+                if st.form_submit_button("Salvar foto"):
+                    if not cow_name:
+                        st.error("Preencha o nome da vaca")
+                    elif not image_url and not image_file:
+                        st.error("Informe uma imagem")
+                    else:
+                        photo_image = ""
+                        if image_file and st.session_state.github_token:
+                            with st.spinner("Enviando imagem para GitHub..."):
+                                filename = f"daughters/{int(datetime.now().timestamp())}-{image_file.name}"
+                                photo_image = upload_image_to_github(
+                                    image_file.read(),
+                                    filename,
+                                    st.session_state.github_token,
+                                    st.session_state.github_repo_owner,
+                                    st.session_state.github_repo_name
+                                )
+                        elif image_file:
+                            st.warning("GitHub não configurado. Usando base64 local.")
+                            photo_image = base64.b64encode(image_file.read()).decode()
+                            photo_image = f"data:image/png;base64,{photo_image}"
+                        else:
+                            photo_image = image_url
+
+                        new_photo = {
+                            "id": int(datetime.now().timestamp() * 1000),
+                            "cowName": cow_name,
+                            "farm": farm,
+                            "location": location,
+                            "milk": milk,
+                            "lactation": lactation,
+                            "image": photo_image
+                        }
+                        selected_bull["daughters"].insert(0, new_photo)
+                        save_data()
+                        st.session_state.showAddPhoto = False
+                        st.success("Foto adicionada com sucesso!")
+                        st.rerun()
+
+        # Galeria de fotos
+        if selected_bull.get("daughters"):
+            st.markdown(f"### Fotos de filhas ({len(selected_bull['daughters'])})")
+
+            cols = st.columns(3)
+            for idx, photo in enumerate(selected_bull["daughters"]):
+                with cols[idx % 3]:
+                    st.image(photo["image"], use_column_width=True)
+                    st.markdown(f"**{photo['cowName']}**")
+                    st.markdown(f"{photo.get('farm', '-')} | {photo.get('location', '-')}")
+                    if photo.get("milk"):
+                        st.markdown(f"Produção: {photo['milk']}")
+                    if photo.get("lactation"):
+                        st.markdown(f"Lactação: {photo['lactation']}")
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Baixar", key=f"download_{photo['id']}"):
+                            st.info("Clique com botão direito na imagem acima e selecione 'Salvar imagem como'")
+                    with col2:
+                        if st.button("Apagar", key=f"delete_photo_{photo['id']}"):
+                            selected_bull["daughters"] = [p for p in selected_bull["daughters"] if p["id"] != photo["id"]]
+                            save_data()
+                            st.success("Foto removida!")
+                            st.rerun()
+        else:
+            st.info("Nenhuma foto cadastrada para este touro ainda.")
