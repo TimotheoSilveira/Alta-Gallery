@@ -107,11 +107,12 @@ st.markdown("""
 # INICIALIZAR SESSION STATE
 # ============================================================================
 
-if "isAdmin" not in st.session_state:
-    st.session_state.isAdmin = False
-    st.session_state.adminEmail = ""
+if "loggedIn" not in st.session_state:
+    st.session_state.loggedIn = False
+    st.session_state.email = ""
+    st.session_state.userName = ""
     st.session_state.bulls = []
-    st.session_state.admins = []
+    st.session_state.users = []
     st.session_state.query = ""
     st.session_state.breedFilter = "Todas as raças"
     st.session_state.selectedBullId = None
@@ -177,22 +178,6 @@ INITIAL_BULLS = [
     }
 ]
 
-# Administradores pré-definidos (senha em texto plano por simplicidade)
-INITIAL_ADMINS = [
-    {
-        "id": 1,
-        "email": "admin@altagenetics.com",
-        "password": "admin123",
-        "name": "Administrador"
-    },
-    {
-        "id": 2,
-        "email": "gerente@altagenetics.com",
-        "password": "gerente123",
-        "name": "Gerente"
-    }
-]
-
 # ============================================================================
 # FUNÇÕES DE ARMAZENAMENTO LOCAL
 # ============================================================================
@@ -209,17 +194,17 @@ def save_data():
     with open("alta_gallery_data.json", "w", encoding="utf-8") as f:
         json.dump(st.session_state.bulls, f, indent=2, ensure_ascii=False)
 
-def load_admins():
-    """Carrega administradores do arquivo JSON"""
-    if Path("alta_gallery_admins.json").exists():
-        with open("alta_gallery_admins.json", "r", encoding="utf-8") as f:
+def load_users():
+    """Carrega usuários do arquivo JSON"""
+    if Path("alta_gallery_users.json").exists():
+        with open("alta_gallery_users.json", "r", encoding="utf-8") as f:
             return json.load(f)
-    return [a.copy() for a in INITIAL_ADMINS]
+    return []
 
-def save_admins():
-    """Salva administradores em arquivo JSON"""
-    with open("alta_gallery_admins.json", "w", encoding="utf-8") as f:
-        json.dump(st.session_state.admins, f, indent=2, ensure_ascii=False)
+def save_users():
+    """Salva usuários em arquivo JSON"""
+    with open("alta_gallery_users.json", "w", encoding="utf-8") as f:
+        json.dump(st.session_state.users, f, indent=2, ensure_ascii=False)
 
 # ============================================================================
 # FUNÇÕES DO GITHUB
@@ -228,22 +213,43 @@ def save_admins():
 def upload_image_to_github(file_content, filename, github_token, repo_owner, repo_name, folder="images"):
     """
     Faz upload de uma imagem para o GitHub
+
+    Args:
+        file_content: bytes da imagem
+        filename: nome do arquivo
+        github_token: token de autenticação do GitHub
+        repo_owner: proprietário do repositório
+        repo_name: nome do repositório
+        folder: pasta dentro do repositório
+
+    Returns:
+        URL raw da imagem ou None se falhar
     """
     try:
+        # Codificar a imagem em base64
         encoded_content = base64.b64encode(file_content).decode()
+
+        # Montar a URL da API do GitHub
         url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{folder}/{filename}"
+
+        # Headers com autenticação
         headers = {
             "Authorization": f"token {github_token}",
             "Content-Type": "application/json"
         }
+
+        # Dados para o upload
         data = {
             "message": f"Upload imagem: {filename}",
             "content": encoded_content,
             "branch": "main"
         }
+
+        # Fazer a requisição
         response = requests.put(url, json=data, headers=headers, timeout=10)
 
         if response.status_code in [201, 200]:
+            # Retorna a URL raw da imagem
             return f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/main/{folder}/{filename}"
         else:
             st.error(f"Erro ao fazer upload no GitHub: {response.json().get('message', 'Erro desconhecido')}")
@@ -296,182 +302,95 @@ def get_selected_bull():
 
 if not st.session_state.bulls:
     st.session_state.bulls = load_data()
-if not st.session_state.admins:
-    st.session_state.admins = load_admins()
+if not st.session_state.users:
+    st.session_state.users = load_users()
 
 # ============================================================================
-# INTERFACE DE LOGIN DO ADMINISTRADOR
+# INTERFACE DE LOGIN
 # ============================================================================
 
-if not st.session_state.isAdmin:
-    # Mostrar galeria pública
+if not st.session_state.loggedIn:
+    col1, col2, col3 = st.columns([1, 2, 1])
+
+    with col2:
+        st.markdown("### 🐄 Alta Gallery")
+        st.markdown("**Acesso liberado para e-mails com final @altagenetics.com**")
+
+        with st.form("login_form"):
+            email = st.text_input("E-mail corporativo", placeholder="seu.nome@altagenetics.com")
+            password = st.text_input("Senha", type="password", placeholder="Digite sua senha")
+            submit = st.form_submit_button("Acessar", use_container_width=True)
+
+            if submit:
+                email = email.strip().lower()
+                if not email.endswith("@altagenetics.com"):
+                    st.error("Use um e-mail com final @altagenetics.com")
+                elif not password:
+                    st.error("Informe uma senha")
+                else:
+                    registered = next((u for u in st.session_state.users if u["email"] == email), None)
+                    if registered and registered["password"] != password:
+                        st.error("Senha incorreta para este usuário cadastrado")
+                    else:
+                        st.session_state.loggedIn = True
+                        st.session_state.email = email
+                        st.session_state.userName = registered["name"] if registered else email.split("@")[0]
+                        st.rerun()
+
+        st.markdown("---")
+
+        if st.button("Criar cadastro", use_container_width=True):
+            st.session_state.showRegister = True
+            st.rerun()
+
+        # Modal de registro
+        if st.session_state.get("showRegister", False):
+            st.markdown("### Criar cadastro")
+            with st.form("register_form"):
+                name = st.text_input("Nome", placeholder="Seu nome")
+                reg_email = st.text_input("E-mail corporativo", placeholder="seu.nome@altagenetics.com")
+                reg_password = st.text_input("Senha", type="password")
+                reg_confirm = st.text_input("Confirmar senha", type="password")
+                reg_submit = st.form_submit_button("Salvar cadastro", use_container_width=True)
+
+                if reg_submit:
+                    reg_email = reg_email.strip().lower()
+                    if not name or not reg_email.endswith("@altagenetics.com") or not reg_password:
+                        st.error("Preencha nome, e-mail corporativo e senha")
+                    elif reg_password != reg_confirm:
+                        st.error("As senhas não conferem")
+                    elif any(u["email"] == reg_email for u in st.session_state.users):
+                        st.error("Este e-mail já está cadastrado")
+                    else:
+                        st.session_state.users.append({
+                            "id": int(datetime.now().timestamp() * 1000),
+                            "name": name,
+                            "email": reg_email,
+                            "password": reg_password
+                        })
+                        save_users()
+                        st.success("Cadastro salvo com sucesso. Agora você já pode entrar.")
+                        st.session_state.showRegister = False
+                        st.rerun()
+
+# ============================================================================
+# DASHBOARD PRINCIPAL
+# ============================================================================
+
+else:
+    # Header
     col1, col2, col3 = st.columns([2, 3, 2])
 
     with col1:
         st.markdown("### 🐄 Alta Gallery")
 
     with col3:
-        if st.button("🔐 Acesso Admin"):
-            st.session_state.showAdminLogin = True
-            st.rerun()
-
-    st.markdown("---")
-
-    # Modal de login do admin
-    if st.session_state.get("showAdminLogin", False):
-        col1, col2, col3 = st.columns([1, 2, 1])
-
-        with col2:
-            st.markdown("### 🔐 Acesso de Administrador")
-            st.markdown("Apenas administradores cadastrados podem editar o conteúdo.")
-
-            with st.form("admin_login_form"):
-                email = st.text_input("E-mail", placeholder="admin@altagenetics.com")
-                password = st.text_input("Senha", type="password", placeholder="Digite sua senha")
-                submit = st.form_submit_button("Entrar como Admin", use_container_width=True)
-
-                if submit:
-                    email = email.strip().lower()
-                    admin = next((a for a in st.session_state.admins if a["email"] == email), None)
-
-                    if admin and admin["password"] == password:
-                        st.session_state.isAdmin = True
-                        st.session_state.adminEmail = email
-                        st.session_state.showAdminLogin = False
-                        st.success("Bem-vindo, administrador!")
-                        st.rerun()
-                    else:
-                        st.error("E-mail ou senha incorretos")
-
-            if st.button("Fechar"):
-                st.session_state.showAdminLogin = False
-                st.rerun()
-
-    # GALERIA PÚBLICA
-    st.markdown("## Touros Cadastrados")
-    st.markdown("Conheça os touros Alta Genetics e a progênie deles.")
-
-    # Stats
-    col1, col2, col3 = st.columns(3)
-    total_photos = sum(len(bull.get("daughters", [])) for bull in st.session_state.bulls)
-    breeds_count = len(get_breeds()) - 1
-
-    with col1:
-        st.metric("Touros", len(st.session_state.bulls))
-    with col2:
-        st.metric("Raças", max(breeds_count, 0))
-    with col3:
-        st.metric("Fotos", total_photos)
-
-    st.markdown("---")
-
-    # Filtros públicos
-    col1, col2 = st.columns([3, 1])
-
-    with col1:
-        st.session_state.query = st.text_input(
-            "Buscar por nome ou código do touro",
-            value=st.session_state.query,
-            placeholder="Digite para filtrar..."
-        )
-
-    with col2:
-        st.session_state.breedFilter = st.selectbox(
-            "Raça",
-            get_breeds(),
-            index=0
-        )
-
-    st.markdown("---")
-
-    # Listagem pública de touros
-    filtered_bulls = get_filtered_bulls()
-
-    if not filtered_bulls:
-        st.info("Nenhum touro encontrado com esse filtro.")
-    else:
-        st.markdown(f"### {len(filtered_bulls)} resultado(s)")
-
-        for bull in filtered_bulls:
-            with st.container():
-                col1, col2, col3 = st.columns([1, 3, 1])
-
-                with col1:
-                    if bull.get("bullImage"):
-                        st.image(bull["bullImage"], use_column_width=True)
-                    else:
-                        st.info("Sem foto")
-
-                with col2:
-                    st.markdown(f"### {bull['name']}")
-                    st.markdown(f"**Código:** {bull['code']}")
-                    st.markdown(f"**Raça:** {bull['breed']} | **Categoria:** {bull.get('category', 'N/A')}")
-                    st.markdown(f"**Descrição:** {bull.get('description', 'Sem descrição genética cadastrada.')}")
-                    st.markdown(f"**Fotos de filhas:** {len(bull.get('daughters', []))}")
-
-                with col3:
-                    if st.button("Ver galeria", key=f"open_{bull['id']}"):
-                        st.session_state.selectedBullId = bull["id"]
-                        st.rerun()
-
-            st.divider()
-
-    # Galeria do Touro (pública)
-    selected_bull = get_selected_bull()
-    if selected_bull:
-        st.markdown(f"## Galeria - {selected_bull['name']} ({selected_bull['code']})")
-
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            if selected_bull.get("bullImage"):
-                st.image(selected_bull["bullImage"], use_column_width=True)
-            else:
-                st.info("Sem foto do touro")
-
-        with col2:
-            st.markdown(f"**Raça:** {selected_bull['breed']}")
-            st.markdown(f"**Categoria:** {selected_bull.get('category', 'N/A')}")
-            st.markdown(f"**Descrição:** {selected_bull.get('description', 'Sem descrição')}")
-
-        if st.button("Fechar galeria"):
-            st.session_state.selectedBullId = None
-            st.rerun()
-
-        st.divider()
-
-        # Galeria de fotos das filhas (pública)
-        if selected_bull.get("daughters"):
-            st.markdown(f"### Fotos de filhas ({len(selected_bull['daughters'])})")
-
-            cols = st.columns(3)
-            for idx, photo in enumerate(selected_bull["daughters"]):
-                with cols[idx % 3]:
-                    st.image(photo["image"], use_column_width=True)
-                    st.markdown(f"**{photo['cowName']}**")
-                    st.markdown(f"{photo.get('farm', '-')} | {photo.get('location', '-')}")
-                    if photo.get("milk"):
-                        st.markdown(f"Produção: {photo['milk']}")
-                    if photo.get("lactation"):
-                        st.markdown(f"Lactação: {photo['lactation']}")
-        else:
-            st.info("Nenhuma foto cadastrada para este touro ainda.")
-
-# ============================================================================
-# PAINEL DE ADMINISTRADOR
-# ============================================================================
-
-else:
-    # Header do Admin
-    col1, col2, col3 = st.columns([2, 3, 2])
-
-    with col1:
-        st.markdown("### 🐄 Alta Gallery - Admin")
-
-    with col3:
-        st.markdown(f"**{st.session_state.adminEmail}** (Admin)")
+        display_user = st.session_state.userName or st.session_state.email
+        st.markdown(f"**{display_user}**")
         if st.button("Sair"):
-            st.session_state.isAdmin = False
-            st.session_state.adminEmail = ""
+            st.session_state.loggedIn = False
+            st.session_state.email = ""
+            st.session_state.userName = ""
             st.rerun()
 
     st.markdown("---")
@@ -523,8 +442,8 @@ else:
         """)
 
     # Hero Section
-    st.markdown("## Gerenciar Touros")
-    st.markdown("Adicione, edite e exclua touros e suas fotos.")
+    st.markdown("## Touros Cadastrados")
+    st.markdown("Gerencie e visualize a progênie dos touros Alta Genetics.")
 
     # Stats
     col1, col2, col3 = st.columns(3)
@@ -583,6 +502,74 @@ else:
                 st.rerun()
 
     st.markdown("---")
+
+    # Modal: Adicionar Touro
+    if st.session_state.get("showAddBull", False):
+        st.markdown("### Adicionar novo touro")
+        with st.form("add_bull_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                name = st.text_input("Nome do touro")
+                code = st.text_input("Código")
+            with col2:
+                breed = st.selectbox("Raça", ["Holandês", "Jersey", "Girolando", "Gir Leiteiro"])
+                category = st.text_input("Categoria", placeholder="Ex.: Leite, Sólidos, Tropical")
+
+            description = st.text_area("Descrição genética", placeholder="Resumo opcional")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                bull_image_url = st.text_input("URL da foto do touro")
+            with col2:
+                bull_file = st.file_uploader("Upload da foto do touro", type=["jpg", "jpeg", "png"], key="add_bull_photo")
+
+            if st.form_submit_button("Salvar touro"):
+                if not name or not code:
+                    st.error("Preencha nome e código")
+                else:
+                    bull_image = ""
+
+                    # Se houver arquivo e GitHub configurado, fazer upload
+                    if bull_file and st.session_state.github_token:
+                        with st.spinner("Enviando imagem para GitHub..."):
+                            filename = f"bulls/{int(datetime.now().timestamp())}-{bull_file.name}"
+                            bull_image = upload_image_to_github(
+                                bull_file.read(),
+                                filename,
+                                st.session_state.github_token,
+                                st.session_state.github_repo_owner,
+                                st.session_state.github_repo_name
+                            )
+                    elif bull_file:
+                        st.warning("GitHub não configurado. Usando URL local (base64).")
+                        bull_image = base64.b64encode(bull_file.read()).decode()
+                        bull_image = f"data:image/png;base64,{bull_image}"
+                    elif bull_image_url:
+                        bull_image = bull_image_url
+
+                    if not bull_file and not bull_image_url:
+                        st.warning("Nenhuma foto adicionada. Você pode adicionar depois.")
+
+                    new_bull = {
+                        "id": int(datetime.now().timestamp() * 1000),
+                        "name": name,
+                        "code": code,
+                        "breed": breed,
+                        "category": category,
+                        "description": description,
+                        "bullImage": bull_image,
+                        "daughters": []
+                    }
+                    st.session_state.bulls.insert(0, new_bull)
+                    save_data()
+                    st.session_state.showAddBull = False
+                    st.success("Touro adicionado com sucesso!")
+                    st.rerun()
+
+        if st.button("Fechar"):
+            st.session_state.showAddBull = False
+            st.rerun()
+
         for bull in filtered_bulls:
             with st.container():
                 col1, col2, col3 = st.columns([1, 3, 1])
@@ -803,3 +790,4 @@ else:
         if st.button("Fechar visualização"):
             st.session_state.previewPhoto = None
             st.rerun()
+
