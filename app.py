@@ -1,23 +1,11 @@
 import streamlit as st
 import json
-import base64
-from pathlib import Path
 from datetime import datetime
+from PIL import Image
 import io
-import os
+from google_drive_manager import GoogleDriveManager
 
-try:
-    from google.oauth2.service_account import Credentials
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaIoBaseUpload
-    GOOGLE_DRIVE_AVAILABLE = True
-except ImportError:
-    GOOGLE_DRIVE_AVAILABLE = False
-
-# ============================================================================
-# CONFIGURAÇÃO
-# ============================================================================
-
+# Configuração da página
 st.set_page_config(
     page_title="Alta Gallery",
     page_icon="🐄",
@@ -25,378 +13,266 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CONFIGURAÇÃO DO GOOGLE DRIVE (usando Streamlit Secrets)
-GOOGLE_DRIVE_FOLDER_ID = st.secrets.get("google_drive_folder_id", "")
-SCOPES = ['https://www.googleapis.com/auth/drive']
-
-# ============================================================================
-# DADOS INICIAIS
-# ============================================================================
-
-INITIAL_BULLS = [
-    {
-        "id": 1,
-        "name": "Super Bull 001",
-        "code": "SB001",
-        "breed": "Holandês",
-        "category": "Leite",
-        "description": "Excelente produção de leite e conformação.",
-        "bullImage": "https://images.unsplash.com/photo-1517849845537-4d257902454a?auto=format&fit=crop&w=900&q=80",
-        "daughters": [
-            {
-                "id": 101,
-                "cowName": "Vaca 4021",
-                "farm": "Fazenda Boa Vista",
-                "location": "Varginha / MG",
-                "milk": "42 kg/dia",
-                "lactation": "2ª lactação",
-                "image": "https://images.unsplash.com/photo-1516467508483-a7212febe31a?auto=format&fit=crop&w=1200&q=80"
-            },
-            {
-                "id": 102,
-                "cowName": "Estrela 198",
-                "farm": "Fazenda Santa Clara",
-                "location": "Carmo do Rio Claro / MG",
-                "milk": "38 kg/dia",
-                "lactation": "1ª lactação",
-                "image": "https://images.unsplash.com/photo-1500595046743-cd271d694d30?auto=format&fit=crop&w=1200&q=80"
-            }
-        ]
-    },
-    {
-        "id": 2,
-        "name": "Alta Prime 245",
-        "code": "AP245",
-        "breed": "Jersey",
-        "category": "Sólidos",
-        "description": "Destaque para sólidos, fertilidade e vacas funcionais.",
-        "bullImage": "https://images.unsplash.com/photo-1493962853295-0fd70327578a?auto=format&fit=crop&w=900&q=80",
-        "daughters": []
-    },
-    {
-        "id": 3,
-        "name": "Lineage Force 990",
-        "code": "LF990",
-        "breed": "Girolando",
-        "category": "Tropical",
-        "description": "Boa adaptação, persistência e excelente tipo leiteiro.",
-        "bullImage": "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=900&q=80",
-        "daughters": []
+# CSS customizado
+st.markdown("""
+<style>
+    :root {
+        --blue: #0b57b7;
+        --blue-dark: #0a3f8f;
+        --bg: #f5f7fb;
     }
-]
 
-# ============================================================================
-# INICIALIZAR SESSION STATE
-# ============================================================================
+    [data-testid="stAppViewContainer"] {
+        background-color: var(--bg);
+    }
 
-if "bulls" not in st.session_state:
-    st.session_state.bulls = []
-    st.session_state.query = ""
-    st.session_state.breedFilter = "Todas as raças"
-    st.session_state.selectedBullId = None
-    st.session_state.previewPhoto = None
+    .bull-card {
+        border: 1px solid #dbe3ee;
+        border-radius: 20px;
+        padding: 20px;
+        background: white;
+        box-shadow: 0 2px 8px rgba(13, 63, 138, 0.08);
+    }
 
-# ============================================================================
-# FUNÇÕES DO GOOGLE DRIVE
-# ============================================================================
+    .stat-card {
+        background: white;
+        border: 1px solid #dbe3ee;
+        border-radius: 18px;
+        padding: 16px;
+        text-align: center;
+    }
 
+    .badge {
+        background: linear-gradient(135deg, #21a4ff, #0b57b7);
+        color: white;
+        padding: 6px 12px;
+        border-radius: 10px;
+        font-size: 12px;
+        font-weight: bold;
+        display: inline-block;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Inicializa gerenciador do Google Drive
 @st.cache_resource
-def get_drive_service():
-    """Retorna serviço autenticado do Google Drive usando Streamlit Secrets"""
-    if not GOOGLE_DRIVE_AVAILABLE:
-        return None
+def get_drive_manager():
+    return GoogleDriveManager()
 
-    try:
-        # Obter credenciais do Streamlit Secrets
-        service_account_info = st.secrets.get("google_service_account")
+drive_manager = get_drive_manager()
 
-        if not service_account_info:
-            return None
+# Inicializa estado da sessão
+if 'bulls' not in st.session_state:
+    st.session_state.bulls = drive_manager.load_bulls_data()
 
-        credentials = Credentials.from_service_account_info(
-            service_account_info,
-            scopes=SCOPES
-        )
-        service = build('drive', 'v3', credentials=credentials)
-        return service
-    except Exception as e:
-        st.error(f"Erro ao conectar com Google Drive: {str(e)}")
-        return None
+if 'loggedIn' not in st.session_state:
+    st.session_state.loggedIn = False
 
-def upload_photo_to_google_drive(file_content, filename, folder_id=GOOGLE_DRIVE_FOLDER_ID):
-    """Faz upload de foto para Google Drive e retorna a URL pública"""
-    service = get_drive_service()
+if 'email' not in st.session_state:
+    st.session_state.email = ""
 
-    if not service:
-        st.error("Google Drive não configurado. Verifique Streamlit Secrets")
-        return None
-
-    try:
-        # Metadados do arquivo
-        file_metadata = {
-            'name': filename,
-            'parents': [folder_id],
-            'mimeType': 'image/jpeg'
-        }
-
-        # Fazer upload
-        media = MediaIoBaseUpload(
-            io.BytesIO(file_content),
-            mimetype='image/jpeg',
-            resumable=True
-        )
-
-        file = service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id'
-        ).execute()
-
-        file_id = file.get('id')
-
-        # Tornar arquivo público
-        try:
-            service.permissions().create(
-                fileId=file_id,
-                body={'type': 'anyone', 'role': 'reader'}
-            ).execute()
-        except:
-            pass
-
-        # Retornar URL pública
-        return f"https://drive.google.com/uc?export=view&id={file_id}"
-
-    except Exception as e:
-        st.error(f"Erro ao fazer upload: {str(e)}")
-        return None
-
-def test_google_drive_connection():
-    """Testa conexão com Google Drive"""
-    service = get_drive_service()
-    if not service:
-        return False
-
-    try:
-        service.files().list(spaces='drive', pageSize=1).execute()
-        return True
-    except:
-        return False
-
-# ============================================================================
-# FUNÇÕES DE ARMAZENAMENTO LOCAL
-# ============================================================================
-
-def load_bulls():
-    if Path("bulls_data.json").exists():
-        with open("bulls_data.json", "r", encoding="utf-8") as f:
-            return json.load(f)
-    return INITIAL_BULLS.copy()
-
-def save_bulls():
-    with open("bulls_data.json", "w", encoding="utf-8") as f:
-        json.dump(st.session_state.bulls, f, indent=2, ensure_ascii=False)
-
-# ============================================================================
-# FUNÇÕES AUXILIARES
-# ============================================================================
-
-def get_breeds():
-    breeds = set(bull["breed"] for bull in st.session_state.bulls)
-    return ["Todas as raças"] + sorted(list(breeds))
-
-def get_filtered_bulls():
-    filtered = []
-    for bull in st.session_state.bulls:
-        haystack = f"{bull['name']} {bull['code']} {bull.get('category', '')} {bull['breed']}".lower()
-        matches_query = st.session_state.query.lower() in haystack
-        matches_breed = (st.session_state.breedFilter == "Todas as raças" or 
-                        bull["breed"] == st.session_state.breedFilter)
-        if matches_query and matches_breed:
-            filtered.append(bull)
-    return filtered
-
-def get_selected_bull():
-    for bull in st.session_state.bulls:
-        if bull["id"] == st.session_state.selectedBullId:
-            return bull
-    return None
-
-# ============================================================================
-# CARREGAR DADOS
-# ============================================================================
-
-if not st.session_state.bulls:
-    st.session_state.bulls = load_bulls()
-
-# ============================================================================
-# GALERIA PÚBLICA
-# ============================================================================
-
-col1, col2, col3 = st.columns([2, 3, 2])
-
-with col1:
-    st.markdown("### 🐄 Alta Gallery")
-
-st.divider()
-
-st.markdown("## Touros Cadastrados")
-st.markdown("Conheça os touros Alta Genetics e a progênie deles.")
-
-col1, col2, col3 = st.columns(3)
-total_photos = sum(len(bull.get("daughters", [])) for bull in st.session_state.bulls)
-breeds_count = len(get_breeds()) - 1
-
-with col1:
-    st.metric("Touros", len(st.session_state.bulls))
-with col2:
-    st.metric("Raças", max(breeds_count, 0))
-with col3:
-    st.metric("Fotos", total_photos)
-
-st.divider()
-
-col1, col2 = st.columns([3, 1])
-
-with col1:
-    st.session_state.query = st.text_input(
-        "Buscar por nome ou código do touro",
-        value=st.session_state.query,
-        placeholder="Digite para filtrar..."
-    )
-
-with col2:
-    st.session_state.breedFilter = st.selectbox(
-        "Raça",
-        get_breeds(),
-        index=0
-    )
-
-st.divider()
-
-filtered_bulls = get_filtered_bulls()
-
-if not filtered_bulls:
-    st.info("Nenhum touro encontrado com esse filtro.")
-else:
-    st.markdown(f"### {len(filtered_bulls)} resultado(s)")
-
-    for bull in filtered_bulls:
-        col1, col2, col3 = st.columns([1, 3, 1])
-
-        with col1:
-            if bull.get("bullImage"):
-                st.image(bull["bullImage"], use_column_width=True)
-            else:
-                st.info("Sem foto")
-
-        with col2:
-            st.markdown(f"### {bull['name']}")
-            st.markdown(f"**Código:** {bull['code']}")
-            st.markdown(f"**Raça:** {bull['breed']} | **Categoria:** {bull.get('category', 'N/A')}")
-            st.markdown(f"**Descrição:** {bull.get('description', 'Sem descrição genética cadastrada.')}")
-            st.markdown(f"**Fotos de filhas:** {len(bull.get('daughters', []))}")
-
-        with col3:
-            if st.button("Ver galeria", key=f"open_{bull['id']}"):
-                st.session_state.selectedBullId = bull["id"]
-                st.rerun()
-
-        st.divider()
-
-# ============================================================================
-# GALERIA DO TOURO
-# ============================================================================
-
-selected_bull = get_selected_bull()
-if selected_bull:
-    st.markdown(f"## Galeria - {selected_bull['name']} ({selected_bull['code']})")
-
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        if selected_bull.get("bullImage"):
-            st.image(selected_bull["bullImage"], use_column_width=True)
-        else:
-            st.info("Sem foto")
+# Página de Login
+def render_login():
+    col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
-        st.markdown(f"**Raça:** {selected_bull['breed']}")
-        st.markdown(f"**Categoria:** {selected_bull.get('category', 'N/A')}")
-        st.markdown(f"**Descrição:** {selected_bull.get('description', 'Sem descrição')}")
+        st.image("https://via.placeholder.com/150?text=Alta+Genetics", width=100)
+        st.title("Alta Gallery")
+        st.markdown("### Acesso liberado para @altagenetics.com")
 
-    if st.button("Fechar galeria"):
-        st.session_state.selectedBullId = None
-        st.rerun()
+        with st.form("login_form"):
+            email = st.text_input("E-mail corporativo", placeholder="seu.nome@altagenetics.com")
+            password = st.text_input("Senha", type="password")
+            submit = st.form_submit_button("Acessar", use_container_width=True)
 
-    st.divider()
-
-    # Fotos das filhas
-    if selected_bull.get("daughters"):
-        st.markdown(f"### Fotos de filhas ({len(selected_bull['daughters'])})")
-
-        cols = st.columns(3)
-        for idx, photo in enumerate(selected_bull["daughters"]):
-            with cols[idx % 3]:
-                st.image(photo["image"], use_column_width=True)
-                st.markdown(f"**{photo['cowName']}**")
-                st.markdown(f"{photo.get('farm', '-')} | {photo.get('location', '-')}")
-                if photo.get("milk"):
-                    st.markdown(f"Produção: {photo['milk']}")
-                if photo.get("lactation"):
-                    st.markdown(f"Lactação: {photo['lactation']}")
-
-                if st.button("Ampliar", key=f"preview_{photo['id']}"):
-                    st.session_state.previewPhoto = photo
+            if submit:
+                if not email.endswith("@altagenetics.com"):
+                    st.error("Use um e-mail com final @altagenetics.com")
+                elif not password:
+                    st.error("Informe uma senha")
+                else:
+                    st.session_state.loggedIn = True
+                    st.session_state.email = email
                     st.rerun()
-    else:
-        st.info("Nenhuma foto cadastrada para este touro ainda.")
 
-# ============================================================================
-# VISUALIZAÇÃO DE FOTO
-# ============================================================================
+# Página do Dashboard
+def render_dashboard():
+    # Header
+    col1, col2, col3 = st.columns([2, 1, 1])
 
-if st.session_state.previewPhoto:
-    photo = st.session_state.previewPhoto
-    st.markdown(f"## Visualização - {photo['cowName']}")
-    st.image(photo["image"], use_column_width=True)
-
-    col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown(f"**Vaca:** {photo['cowName']}")
-    with col2:
-        st.markdown(f"**Fazenda:** {photo.get('farm', '-')}")
+        st.title("🐄 Alta Gallery")
+        st.markdown("Gerencie e visualize a progênie dos touros Alta Genetics")
+
     with col3:
-        st.markdown(f"**Local:** {photo.get('location', '-')}")
-
-    if photo.get("milk"):
-        st.markdown(f"**Produção:** {photo['milk']}")
-    if photo.get("lactation"):
-        st.markdown(f"**Lactação:** {photo['lactation']}")
-
-    if st.button("Fechar visualização"):
-        st.session_state.previewPhoto = None
-        st.rerun()
-
-# ============================================================================
-# SIDEBAR - INFORMAÇÕES
-# ============================================================================
-
-with st.sidebar:
-    st.markdown("### 📋 Informações")
-    st.markdown(f"**Total de touros:** {len(st.session_state.bulls)}")
-    st.markdown(f"**Total de fotos:** {total_photos}")
-    st.markdown(f"**Raças cadastradas:** {breeds_count}")
+        if st.button("🚪 Sair", use_container_width=True):
+            st.session_state.loggedIn = False
+            st.session_state.email = ""
+            st.rerun()
 
     st.divider()
 
-    st.markdown("### 🔧 Google Drive")
-    if GOOGLE_DRIVE_AVAILABLE:
-        if test_google_drive_connection():
-            st.success("✅ Google Drive conectado")
-        else:
-            st.warning("⚠️ Google Drive não configurado")
-    else:
-        st.warning("⚠️ Bibliotecas do Google não instaladas")
+    # Estatísticas
+    col1, col2, col3 = st.columns(3)
 
-    st.markdown(f"**ID da Pasta:** `{GOOGLE_DRIVE_FOLDER_ID}`")
-    if GOOGLE_DRIVE_FOLDER_ID:
-        st.markdown(f"[Abrir Google Drive](https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}?usp=sharing)")
+    with col1:
+        st.metric("Touros Cadastrados", len(st.session_state.bulls))
+
+    with col2:
+        breeds = set(bull.get('breed', '') for bull in st.session_state.bulls)
+        st.metric("Raças", len(breeds))
+
+    with col3:
+        total_photos = sum(len(bull.get('daughters', [])) for bull in st.session_state.bulls)
+        st.metric("Fotos de Filhas", total_photos)
+
+    st.divider()
+
+    # Filtros
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        search_query = st.text_input("🔎 Buscar por nome ou código do touro...")
+
+    with col2:
+        breeds_list = ["Todas as raças"] + sorted(set(bull.get('breed', '') for bull in st.session_state.bulls))
+        breed_filter = st.selectbox("Raça", breeds_list)
+
+    st.divider()
+
+    # Ações
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        if st.button("➕ Adicionar Touro", use_container_width=True):
+            st.session_state.show_add_bull = True
+
+    with col2:
+        if st.button("📥 Importar", use_container_width=True):
+            st.session_state.show_import = True
+
+    with col3:
+        if st.button("📤 Exportar", use_container_width=True):
+            st.session_state.show_export = True
+
+    with col4:
+        if st.button("🔄 Resetar", use_container_width=True):
+            if st.session_state.get('confirm_reset'):
+                st.session_state.bulls = []
+                drive_manager.save_bulls_data([])
+                st.session_state.confirm_reset = False
+                st.success("Dados resetados!")
+                st.rerun()
+            else:
+                st.session_state.confirm_reset = True
+                st.warning("Clique novamente para confirmar")
+
+    st.divider()
+
+    # Filtrar touros
+    filtered_bulls = st.session_state.bulls
+
+    if search_query:
+        filtered_bulls = [
+            bull for bull in filtered_bulls
+            if search_query.lower() in f"{bull['name']} {bull['code']}".lower()
+        ]
+
+    if breed_filter != "Todas as raças":
+        filtered_bulls = [bull for bull in filtered_bulls if bull.get('breed') == breed_filter]
+
+    # Exibir cards dos touros
+    if filtered_bulls:
+        for bull in filtered_bulls:
+            with st.container(border=True):
+                col1, col2 = st.columns([1, 3])
+
+                with col1:
+                    if bull.get('bullImage'):
+                        st.image(bull['bullImage'], width=150)
+                    else:
+                        st.info("Sem foto")
+
+                with col2:
+                    st.subheader(bull['name'])
+                    st.markdown(f"**Código:** {bull['code']}")
+                    st.markdown(f"<span class='badge'>{bull.get('breed', 'N/A')}</span>", unsafe_allow_html=True)
+                    st.markdown(f"**Categoria:** {bull.get('category', '-')}")
+                    st.markdown(f"{bull.get('description', 'Sem descrição')}")
+                    st.markdown(f"**{len(bull.get('daughters', []))} fotos de filhas**")
+
+                    col_a, col_b, col_c = st.columns(3)
+
+                    with col_a:
+                        if st.button("📸 Abrir Galeria", key=f"open_{bull['id']}"):
+                            st.session_state.selected_bull_id = bull['id']
+                            st.session_state.show_bull_modal = True
+
+                    with col_b:
+                        if st.button("✏️ Editar", key=f"edit_{bull['id']}"):
+                            st.session_state.selected_bull_id = bull['id']
+                            st.session_state.show_edit_bull = True
+
+                    with col_c:
+                        if st.button("🗑️ Excluir", key=f"delete_{bull['id']}"):
+                            st.session_state.bulls = [b for b in st.session_state.bulls if b['id'] != bull['id']]
+                            drive_manager.save_bulls_data(st.session_state.bulls)
+                            st.success("Touro excluído!")
+                            st.rerun()
+    else:
+        st.info("Nenhum touro encontrado com esse filtro.")
+
+    # Modal: Adicionar Touro
+    if st.session_state.get('show_add_bull'):
+        st.divider()
+        st.subheader("➕ Adicionar Novo Touro")
+
+        with st.form("add_bull_form"):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                name = st.text_input("Nome do touro")
+                code = st.text_input("Código")
+                breed = st.selectbox("Raça", ["Holandês", "Jersey", "Girolando", "Gir Leiteiro"])
+
+            with col2:
+                category = st.text_input("Categoria (ex: Leite, Sólidos)")
+                description = st.text_area("Descrição genética")
+
+            bull_image_url = st.text_input("URL da foto do touro")
+            bull_image_file = st.file_uploader("Ou faça upload da foto", type=["jpg", "jpeg", "png"])
+
+            if st.form_submit_button("Salvar Touro", use_container_width=True):
+                if not name or not code:
+                    st.error("Preencha nome e código")
+                else:
+                    bull_image = None
+
+                    if bull_image_file:
+                        image_bytes = bull_image_file.read()
+                        bull_image = drive_manager.upload_image(image_bytes, f"bull_{code}_{datetime.now().timestamp()}.jpg")
+                    elif bull_image_url:
+                        bull_image = bull_image_url
+
+                    new_bull = {
+                        'id': int(datetime.now().timestamp() * 1000),
+                        'name': name,
+                        'code': code,
+                        'breed': breed,
+                        'category': category,
+                        'description': description,
+                        'bullImage': bull_image,
+                        'daughters': []
+                    }
+
+                    st.session_state.bulls.append(new_bull)
+                    drive_manager.save_bulls_data(st.session_state.bulls)
+                    st.session_state.show_add_bull = False
+                    st.success("Touro adicionado com sucesso!")
+                    st.rerun()
+
+# Renderizar página apropriada
+if not st.session_state.loggedIn:
+    render_login()
+else:
+    render_dashboard()
