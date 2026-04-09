@@ -23,24 +23,38 @@ class GoogleDriveManager:
     # ------------------------------------------------------------------
     # Autenticação via Service Account (secrets do Streamlit Cloud)
     # ------------------------------------------------------------------
-    def _authenticate(self):
-        """
-        Lê as credenciais do st.secrets (Streamlit Cloud) ou de uma
-        variável de ambiente SERVICE_ACCOUNT_JSON (local).
-        """
-        try:
-            # Modo Streamlit Cloud: secrets.toml contém [gcp_service_account]
+   def _authenticate(self):
+    """
+    Tenta autenticar via st.secrets primeiro.
+    Se falhar, tenta variável de ambiente.
+    Lança erro claro em ambos os casos de falha.
+    """
+    creds_dict = None
+
+    # Tentativa 1: Streamlit secrets
+    try:
+        if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
-        except Exception:
-            # Modo local: variável de ambiente aponta para o arquivo JSON
-            json_path = os.environ.get("SERVICE_ACCOUNT_JSON", "service_account.json")
+        else:
+            raise KeyError("Chave 'gcp_service_account' não encontrada nos secrets.")
+    except Exception as e_secrets:
+        # Tentativa 2: arquivo local via variável de ambiente
+        json_path = os.environ.get("SERVICE_ACCOUNT_JSON", "service_account.json")
+        if os.path.exists(json_path):
             with open(json_path, "r") as f:
                 creds_dict = json.load(f)
+        else:
+            raise FileNotFoundError(
+                f"Credenciais não encontradas.\n"
+                f"- st.secrets falhou com: {e_secrets}\n"
+                f"- Arquivo local '{json_path}' não existe.\n"
+                f"Configure os secrets no Streamlit Cloud conforme o README."
+            )
 
-        credentials = service_account.Credentials.from_service_account_info(
-            creds_dict, scopes=SCOPES
-        )
-        return build("drive", "v3", credentials=credentials)
+    credentials = service_account.Credentials.from_service_account_info(
+        creds_dict, scopes=SCOPES
+    )
+    return build("drive", "v3", credentials=credentials)
 
     # ------------------------------------------------------------------
     # Utilitários internos
