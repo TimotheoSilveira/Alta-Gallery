@@ -1,136 +1,227 @@
-import os
-import json
 import io
-from google.oauth2.service_account import Credentials
-from google.auth.transport.requests import Request
+import json
+import os
+import streamlit as st
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
-from dotenv import load_dotenv
+from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 
-load_dotenv()
+SCOPES = ["https://www.googleapis.com/auth/drive"]
+
+# IDs das pastas raiz no seu Google Drive
+# Crie essas pastas manualmente no Drive e cole os IDs aqui
+FOLDER_BULLS_DATA = "ID_DA_PASTA_DADOS"        # pasta onde fica bulls_data.json
+FOLDER_BULLS_IMAGES = "ID_DA_PASTA_IMAGENS"    # pasta onde ficam as fotos dos touros
+FOLDER_DAUGHTERS = "ID_DA_PASTA_FILHAS"        # pasta onde ficam as fotos das filhas
+
 
 class GoogleDriveManager:
+
     def __init__(self):
-        self.SCOPES = ['https://www.googleapis.com/auth/drive']
-        self.FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
         self.service = self._authenticate()
 
+    # ------------------------------------------------------------------
+    # Autenticação via Service Account (secrets do Streamlit Cloud)
+    # ------------------------------------------------------------------
     def _authenticate(self):
-        """Autentica com Google Drive usando credenciais de serviço"""
+        """
+        Lê as credenciais do st.secrets (Streamlit Cloud) ou de uma
+        variável de ambiente SERVICE_ACCOUNT_JSON (local).
+        """
         try:
-            # Tenta usar arquivo de credenciais
-            creds_path = os.getenv('GOOGLE_CREDENTIALS_PATH', 'credentials.json')
-            if os.path.exists(creds_path):
-                creds = Credentials.from_service_account_file(
-                    creds_path,
-                    scopes=self.SCOPES
-                )
-            else:
-                # Alternativa: usar variável de ambiente com JSON
-                creds_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
-                if creds_json:
-                    creds_dict = json.loads(creds_json)
-                    creds = Credentials.from_service_account_info(
-                        creds_dict,
-                        scopes=self.SCOPES
-                    )
-                else:
-                    raise ValueError("Credenciais do Google não encontradas")
+            # Modo Streamlit Cloud: secrets.toml contém [gcp_service_account]
+            creds_dict = dict(st.secrets["gcp_service_account"])
+        except Exception:
+            # Modo local: variável de ambiente aponta para o arquivo JSON
+            json_path = os.environ.get("SERVICE_ACCOUNT_JSON", "service_account.json")
+            with open(json_path, "r") as f:
+                creds_dict = json.load(f)
 
-            return build('drive', 'v3', credentials=creds)
-        except Exception as e:
-            print(f"Erro na autenticação: {e}")
-            return None
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=SCOPES
+        )
+        return build("drive", "v3", credentials=credentials)
 
-    def load_bulls_data(self):
-        """Carrega o arquivo JSON de touros do Google Drive"""
-        try:
-            file_id = self._find_file_by_name('alta-gallery-dados.json')
-            if not file_id:
-                return []
+    # ------------------------------------------------------------------
+    # Utilitários internos
+    # ------------------------------------------------------------------
+    def _find_file(self, filename: str, parent_folder_id: str) -> str | None:
+        """Retorna o file_id se o arquivo existir na pasta, senão None."""
+        query = (
+            f"name='{filename}' "
+            f"and '{parent_folder_id}' in parents "
+            f"and trashed=false"
+        )
+        result = (
+            self.service.files()
+            .list(q=query, fields="files(id, name)")
+            .execute()
+        )
+        files = result.get("files", [])
+        return files[0]["id"] if files else None
 
-            request = self.service.files().get_media(fileId=file_id)
-            file_content = request.execute()
-            return json.loads(file_content)
-        except Exception as e:
-            print(f"Erro ao carregar dados: {e}")
+    def _list_files_in_folder(self, folder_id: str) -> list[dict]:
+        """Lista todos os arquivos de uma pasta."""
+        query = f"'{folder_id}' in parents and trashed=false"
+        result = (
+            self.service.files()
+            .list(
+                q=query,
+                fields="files(id, name, mimeType, webContentLink, webViewLink)",
+            )
+            .execute()
+        )
+        return result.get("files", [])
+
+    def _get_public_url(self, file_id: str) -> str:
+        """
+        Torna o arquivo público (leitor) e retorna a URL de visualização
+        direta — ideal para st.image().
+        """
+        self.service.permissions().create(
+            fileId=file_id,
+            body={"role": "reader", "type": "anyone"},
+        ).execute()
+        # URL que força o download/visualização direta
+        return f"https://drive.google.com/uc?export=view&id={file_id}"
+
+    # ------------------------------------------------------------------
+    # JSON de dados dos touros
+    # ------------------------------------------------------------------
+    def load_bulls_data(self) -> list[dict]:
+        """Carrega bulls_data.json do Drive. Retorna lista vazia se não existir."""
+        file_id = self._find_file("bulls_data.json", FOLDER_BULLS_DATA)
+        if not file_id:
             return []
 
-    def save_bulls_data(self, bulls_data):
-        """Salva o arquivo JSON de touros no Google Drive"""
-        try:
-            file_id = self._find_file_by_name('alta-gallery-dados.json')
-            json_content = json.dumps(bulls_data, ensure_ascii=False, indent=2)
-            media = MediaIoBaseUpload(
-                io.BytesIO(json_content.encode('utf-8')),
-                mimetype='application/json',
-                resumable=True
-            )
+        request = self.service.files().get_media(fileId=file_id)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
 
-            if file_id:
-                # Atualiza arquivo existente
-                self.service.files().update(
-                    fileId=file_id,
-                    media_body=media
-                ).execute()
-            else:
-                # Cria novo arquivo
-                file_metadata = {
-                    'name': 'alta-gallery-dados.json',
-                    'parents': [self.FOLDER_ID] if self.FOLDER_ID else []
-                }
-                self.service.files().create(
-                    body=file_metadata,
-                    media_body=media,
-                    fields='id'
-                ).execute()
-        except Exception as e:
-            print(f"Erro ao salvar dados: {e}")
-
-    def upload_image(self, file_bytes, filename):
-        """Faz upload de imagem para Google Drive e retorna URL pública"""
+        buffer.seek(0)
         try:
-            file_metadata = {
-                'name': filename,
-                'parents': [self.FOLDER_ID] if self.FOLDER_ID else []
+            return json.loads(buffer.read().decode("utf-8"))
+        except json.JSONDecodeError:
+            return []
+
+    def save_bulls_data(self, bulls: list[dict]) -> None:
+        """Salva (cria ou sobrescreve) bulls_data.json no Drive."""
+        content = json.dumps(bulls, ensure_ascii=False, indent=2).encode("utf-8")
+        media = MediaIoBaseUpload(io.BytesIO(content), mimetype="application/json")
+
+        file_id = self._find_file("bulls_data.json", FOLDER_BULLS_DATA)
+
+        if file_id:
+            # Atualiza arquivo existente
+            self.service.files().update(
+                fileId=file_id, media_body=media
+            ).execute()
+        else:
+            # Cria novo arquivo
+            metadata = {
+                "name": "bulls_data.json",
+                "parents": [FOLDER_BULLS_DATA],
             }
-            media = MediaIoBaseUpload(
-                io.BytesIO(file_bytes),
-                mimetype='image/jpeg',
-                resumable=True
-            )
-
-            file = self.service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id'
+            self.service.files().create(
+                body=metadata, media_body=media, fields="id"
             ).execute()
 
-            # Torna arquivo público
-            self.service.permissions().create(
-                fileId=file['id'],
-                body={'type': 'anyone', 'role': 'reader'}
-            ).execute()
+    # ------------------------------------------------------------------
+    # Upload de imagens
+    # ------------------------------------------------------------------
+    def upload_image(
+        self,
+        image_bytes: bytes,
+        filename: str,
+        folder_id: str = None,
+    ) -> str:
+        """
+        Faz upload de uma imagem para o Drive e retorna a URL pública.
+        Por padrão usa FOLDER_BULLS_IMAGES.
+        """
+        folder_id = folder_id or FOLDER_BULLS_IMAGES
+        media = MediaIoBaseUpload(
+            io.BytesIO(image_bytes), mimetype="image/jpeg"
+        )
+        metadata = {"name": filename, "parents": [folder_id]}
+        file = (
+            self.service.files()
+            .create(body=metadata, media_body=media, fields="id")
+            .execute()
+        )
+        return self._get_public_url(file["id"])
 
-            # Retorna URL pública
-            return f"https://drive.google.com/uc?id={file['id']}"
-        except Exception as e:
-            print(f"Erro ao fazer upload: {e}")
-            return None
+    def upload_daughter_image(
+        self, image_bytes: bytes, filename: str, bull_code: str
+    ) -> str:
+        """
+        Faz upload da foto de uma filha numa subpasta específica do touro.
+        Cria a subpasta se não existir.
+        """
+        subfolder_id = self._get_or_create_subfolder(bull_code)
+        return self.upload_image(image_bytes, filename, folder_id=subfolder_id)
 
-    def _find_file_by_name(self, filename):
-        """Encontra um arquivo por nome no Google Drive"""
-        try:
-            query = f"name='{filename}' and trashed=false"
-            results = self.service.files().list(
-                q=query,
-                spaces='drive',
-                fields='files(id)',
-                pageSize=1
-            ).execute()
+    # ------------------------------------------------------------------
+    # Subpastas por touro (organização das filhas)
+    # ------------------------------------------------------------------
+    def _get_or_create_subfolder(self, bull_code: str) -> str:
+        """
+        Garante que exista uma subpasta com o nome do código do touro
+        dentro de FOLDER_DAUGHTERS. Retorna o folder_id.
+        """
+        query = (
+            f"name='{bull_code}' "
+            f"and '{FOLDER_DAUGHTERS}' in parents "
+            f"and mimeType='application/vnd.google-apps.folder' "
+            f"and trashed=false"
+        )
+        result = (
+            self.service.files()
+            .list(q=query, fields="files(id)")
+            .execute()
+        )
+        files = result.get("files", [])
+        if files:
+            return files[0]["id"]
 
-            files = results.get('files', [])
-            return files[0]['id'] if files else None
-        except Exception as e:
-            print(f"Erro ao procurar arquivo: {e}")
-            return None
+        # Cria subpasta
+        metadata = {
+            "name": bull_code,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [FOLDER_DAUGHTERS],
+        }
+        folder = (
+            self.service.files()
+            .create(body=metadata, fields="id")
+            .execute()
+        )
+        return folder["id"]
+
+    def list_daughter_images(self, bull_code: str) -> list[dict]:
+        """
+        Lista as imagens de filhas de um touro específico.
+        Retorna lista de dicts com 'name' e 'url'.
+        """
+        subfolder_id = self._get_or_create_subfolder(bull_code)
+        files = self._list_files_in_folder(subfolder_id)
+
+        result = []
+        for f in files:
+            if "image" in f.get("mimeType", ""):
+                result.append(
+                    {
+                        "name": f["name"],
+                        "url": self._get_public_url(f["id"]),
+                        "file_id": f["id"],
+                    }
+                )
+        return result
+
+    def delete_file(self, file_id: str) -> None:
+        """Move um arquivo para a lixeira do Drive."""
+        self.service.files().update(
+            fileId=file_id, body={"trashed": True}
+        ).execute()
