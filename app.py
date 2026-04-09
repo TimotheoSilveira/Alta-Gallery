@@ -271,8 +271,67 @@ def render_dashboard():
                     st.success("Touro adicionado com sucesso!")
                     st.rerun()
 
+def render_daughter_gallery(bull):
+    st.subheader(f"📸 Galeria — {bull['name']} ({bull['code']})")
+
+    # Upload de nova foto de filha
+    with st.expander("➕ Adicionar foto de filha"):
+        uploaded = st.file_uploader(
+            "Selecione uma imagem", type=["jpg", "jpeg", "png"],
+            key=f"daughter_upload_{bull['id']}"
+        )
+        caption = st.text_input("Legenda (opcional)", key=f"caption_{bull['id']}")
+
+        if st.button("Enviar foto", key=f"send_{bull['id']}"):
+            if uploaded:
+                image_bytes = uploaded.read()
+                filename = f"{bull['code']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                url = drive_manager.upload_daughter_image(
+                    image_bytes, filename, bull['code']
+                )
+                daughter_entry = {"url": url, "caption": caption, "filename": filename}
+                bull['daughters'].append(daughter_entry)
+
+                # Atualiza o touro na lista principal
+                for i, b in enumerate(st.session_state.bulls):
+                    if b['id'] == bull['id']:
+                        st.session_state.bulls[i] = bull
+                        break
+
+                drive_manager.save_bulls_data(st.session_state.bulls)
+                st.success("Foto enviada!")
+                st.rerun()
+            else:
+                st.warning("Selecione uma imagem primeiro.")
+
+    # Exibição das fotos em grade
+    daughters = drive_manager.list_daughter_images(bull['code'])
+
+    if daughters:
+        cols = st.columns(3)
+        for idx, daughter in enumerate(daughters):
+            with cols[idx % 3]:
+                st.image(daughter['url'], use_container_width=True)
+                st.caption(daughter['name'])
+    else:
+        st.info("Nenhuma foto de filha cadastrada ainda.")
+
+    if st.button("← Voltar", key="back_gallery"):
+        st.session_state.show_bull_modal = False
+        st.rerun()
+
 # Renderizar página apropriada
 if not st.session_state.loggedIn:
     render_login()
 else:
     render_dashboard()
+
+# Modal: Galeria de filhas
+if st.session_state.get('show_bull_modal') and st.session_state.get('selected_bull_id'):
+    bull = next(
+        (b for b in st.session_state.bulls if b['id'] == st.session_state.selected_bull_id),
+        None
+    )
+    if bull:
+        st.divider()
+        render_daughter_gallery(bull)
