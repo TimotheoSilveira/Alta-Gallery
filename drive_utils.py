@@ -1,5 +1,4 @@
-# drive_utils.py
-# ✅ Zero autenticação — usa apenas links públicos do Google Drive/Sheets
+# drive_utils.py — SEM Service Account, apenas URLs públicas
 import streamlit as st
 import pandas as pd
 import requests
@@ -7,27 +6,14 @@ from PIL import Image
 from io import BytesIO
 from typing import Optional
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CONFIGURAÇÕES — IDs do Google (sem secrets complexos!)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _get_sheet_id() -> str:
-    """Lê o ID da planilha dos secrets (apenas uma string simples)."""
-    try:
-        return st.secrets["sheets"]["sheet_id"]
-    except Exception:
-        st.error("❌ Configure o sheet_id nos secrets do Streamlit.")
-        st.stop()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# GOOGLE SHEETS — leitura via CSV público (SEM API!)
-# ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
+# GOOGLE SHEETS — leitura via URL pública CSV
+# ══════════════════════════════════════════════════════════════
 
 def _sheet_csv_url(sheet_id: str, aba: str) -> str:
     """
-    Gera URL de exportação CSV de uma aba do Google Sheets.
-    A planilha deve estar compartilhada como 'Qualquer pessoa com o link'.
+    Monta a URL de exportação CSV de uma aba do Google Sheets.
+    A planilha DEVE estar compartilhada como 'Qualquer pessoa com o link'.
     """
     return (
         f"https://docs.google.com/spreadsheets/d/{sheet_id}"
@@ -38,24 +24,21 @@ def _sheet_csv_url(sheet_id: str, aba: str) -> str:
 @st.cache_data(ttl=300)  # Cache de 5 minutos
 def load_touros() -> pd.DataFrame:
     """
-    Carrega dados dos touros diretamente do Google Sheets via CSV público.
-    Zero autenticação necessária.
+    Carrega aba 'touros' do Google Sheets via CSV público.
+    Não precisa de autenticação.
     """
-    sheet_id = _get_sheet_id()
-    url = _sheet_csv_url(sheet_id, "touros")
-
     try:
+        sheet_id = st.secrets["sheets"]["sheet_id"]
+        url = _sheet_csv_url(sheet_id, "touros")
         df = pd.read_csv(url)
-        # Garante que colunas essenciais existem
-        for col in ["id_touro", "nome_curto", "raca", "foto_id"]:
-            if col not in df.columns:
-                df[col] = ""
+        # Remove colunas e linhas completamente vazias
+        df = df.dropna(how="all").reset_index(drop=True)
         return df
     except Exception as e:
-        st.error(f"❌ Erro ao carregar planilha de touros: {e}")
+        st.error(f"❌ Erro ao carregar touros: {e}")
         st.info(
             "💡 Verifique se a planilha está compartilhada como "
-            "'Qualquer pessoa com o link pode visualizar'."
+            "'Qualquer pessoa com o link pode ver'."
         )
         return pd.DataFrame()
 
@@ -63,65 +46,68 @@ def load_touros() -> pd.DataFrame:
 @st.cache_data(ttl=300)
 def load_progenies(id_touro: str) -> pd.DataFrame:
     """
-    Carrega filhas de um touro específico via Google Sheets público.
+    Carrega aba 'progenies' e filtra pelo id_touro.
     """
-    sheet_id = _get_sheet_id()
-    url = _sheet_csv_url(sheet_id, "progenies")
-
     try:
+        sheet_id = st.secrets["sheets"]["sheet_id"]
+        url = _sheet_csv_url(sheet_id, "progenies")
         df = pd.read_csv(url)
+        df = df.dropna(how="all").reset_index(drop=True)
+
         if df.empty or "id_touro_pai" not in df.columns:
             return pd.DataFrame()
-        return df[df["id_touro_pai"].astype(str) == str(id_touro)].reset_index(drop=True)
+
+        return df[
+            df["id_touro_pai"].astype(str) == str(id_touro)
+        ].reset_index(drop=True)
+
     except Exception as e:
-        st.error(f"❌ Erro ao carregar filhas: {e}")
+        st.error(f"❌ Erro ao carregar progênies: {e}")
         return pd.DataFrame()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# GOOGLE DRIVE — imagens e PDFs via link público direto
-# ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
+# GOOGLE DRIVE — imagens e PDFs via URL pública
+# ══════════════════════════════════════════════════════════════
 
-def _drive_img_url(file_id: str) -> str:
-    """URL de visualização direta para imagens do Drive."""
-    return f"https://drive.google.com/uc?export=view&id={file_id}"
-
-
-def _drive_download_url(file_id: str) -> str:
-    """URL de download direto para arquivos do Drive."""
+def _drive_image_url(file_id: str) -> str:
+    """
+    Monta URL direta de imagem do Google Drive.
+    O arquivo DEVE estar compartilhado publicamente.
+    """
     return f"https://drive.google.com/uc?export=download&id={file_id}"
 
 
-@st.cache_data(ttl=600)  # Cache de 10 minutos para imagens
+def _drive_thumbnail_url(file_id: str, size: int = 400) -> str:
+    """
+    URL de thumbnail do Drive — mais rápido para galeria.
+    Não exige autenticação.
+    """
+    return f"https://drive.google.com/thumbnail?id={file_id}&sz=w{size}"
+
+
+@st.cache_data(ttl=600)
 def get_image_from_drive(file_id: str) -> Optional[Image.Image]:
     """
-    Carrega imagem do Google Drive via link público.
-    O arquivo deve estar compartilhado como 'Qualquer pessoa com o link'.
+    Baixa imagem do Google Drive pelo file_id.
+    Tenta thumbnail primeiro (mais rápido), depois download direto.
     """
-    if not file_id or str(file_id).strip() == "":
+    if not file_id or str(file_id).strip() in ("", "nan", "None"):
         return None
 
     file_id = str(file_id).strip()
 
-    try:
-        url = _drive_img_url(file_id)
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
-
-        if response.status_code == 200:
-            # Verifica se retornou imagem (não página HTML de erro)
-            content_type = response.headers.get("Content-Type", "")
-            if "image" in content_type:
-                return Image.open(BytesIO(response.content))
-
-        # Tenta URL alternativa se a primeira falhar
-        url2 = f"https://lh3.googleusercontent.com/d/{file_id}"
-        response2 = requests.get(url2, headers=headers, timeout=10)
-        if response2.status_code == 200:
-            return Image.open(BytesIO(response2.content))
-
-    except Exception:
-        pass
+    # Tenta thumbnail primeiro (carrega mais rápido na galeria)
+    for url in [
+        _drive_thumbnail_url(file_id, 600),
+        _drive_image_url(file_id),
+    ]:
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200 and "image" in resp.headers.get("Content-Type", ""):
+                return Image.open(BytesIO(resp.content))
+        except Exception:
+            continue
 
     return None
 
@@ -129,34 +115,42 @@ def get_image_from_drive(file_id: str) -> Optional[Image.Image]:
 @st.cache_data(ttl=600)
 def get_pdf_bytes_from_drive(file_id: str) -> Optional[bytes]:
     """
-    Baixa PDF do Google Drive via link público.
+    Baixa PDF do Google Drive pelo file_id.
+    Retorna bytes prontos para st.download_button.
     """
-    if not file_id or str(file_id).strip() == "":
+    if not file_id or str(file_id).strip() in ("", "nan", "None"):
         return None
 
-    try:
-        url = _drive_download_url(str(file_id).strip())
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=15)
+    file_id = str(file_id).strip()
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
 
-        if response.status_code == 200:
-            return response.content
-    except Exception:
-        pass
+    try:
+        resp = requests.get(url, timeout=30)
+        if resp.status_code == 200:
+            return resp.content
+    except Exception as e:
+        st.warning(f"⚠️ Erro ao baixar PDF: {e}")
 
     return None
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# UPLOAD — Admin escreve direto na planilha via link de edição
-# ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
+# GOOGLE SHEETS — escrita via gspread (só para admin)
+# ══════════════════════════════════════════════════════════════
 
-def get_drive_upload_folder_url() -> str:
+def append_touro(dados: dict) -> bool:
     """
-    Retorna o link da pasta do Drive para upload manual pelo admin.
-    Admin faz upload pelo próprio Google Drive e cola o file_id na planilha.
+    Adiciona linha na aba 'touros' do Google Sheets.
+    Usa gspread com credenciais anônimas via link público de edição.
+
+    NOTA: Para escrita sem Service Account, o admin preenche
+    diretamente no Google Sheets. Esta função é reservada
+    para futuras implementações.
     """
-    try:
-        return st.secrets["drive"]["pasta_touros_url"]
-    except Exception:
-        return ""
+    # Por enquanto, o admin preenche o Sheets diretamente.
+    # O upload de imagens é feito via pasta pública do Drive.
+    st.info(
+        "📝 Para adicionar touros, acesse diretamente o Google Sheets "
+        "e a pasta do Drive usando os links abaixo."
+    )
+    return False
