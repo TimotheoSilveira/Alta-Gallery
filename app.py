@@ -5,7 +5,7 @@ import streamlit as st
 # CONFIGURAÇÃO DA PÁGINA — DEVE SER O PRIMEIRO COMANDO STREAMLIT
 # ══════════════════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="🐂 Galeria de Touros",
+    page_title="Alta Gallery",
     page_icon="🐂",
     layout="wide",
     initial_sidebar_state="auto"
@@ -137,9 +137,11 @@ if is_admin:
     with st.sidebar:
         st.divider()
         st.markdown("### ⚙️ Administração")
-        if st.button("📤 Painel de Upload", use_container_width=True):
-            st.session_state.pagina = "admin"
-            st.rerun()
+        # Botão visível apenas para admin autenticado
+        if st.session_state.is_admin:
+            if st.button("📤 Painel de Upload", use_container_width=True):
+                st.session_state.pagina = "admin"
+                st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FUNÇÕES DE RENDERIZAÇÃO
