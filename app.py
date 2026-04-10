@@ -633,16 +633,10 @@ elif _pagina == "progenies":
 
 elif _pagina == "admin":
     if st.session_state.is_admin:
-        try:
-            from pages.admin_upload import render_admin_panel
-            render_admin_panel()
-        except Exception as e:
-            st.error(f"❌ Erro ao carregar painel admin: {e}")
+        st.info("🚧 Painel administrativo em construção.")
     else:
-        st.warning("🔐 Acesso restrito. Faça login como administrador.")
         st.session_state.pagina = "galeria"
         st.rerun()
-
 else:
     # Fallback seguro para qualquer rota inválida
     st.session_state.pagina = "galeria"
