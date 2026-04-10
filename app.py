@@ -327,16 +327,16 @@ def render_touro_detail():
         c5.metric("% Proteína",       _val(touro, "Prot%"))
 
         st.divider()
-        c6, c7, c8 = st.columns(3)
+        c6 = st.columns(3)
         c6.metric("CGP",  _val(touro, "CGP"))
-        c7.metric("VP",   _val(touro, "VP"))
-        c8.metric("CUB",  _val(touro, "CUB"))
-
+       
+       
     with tab_saude:
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(3)
         c1.metric("REI",  _val(touro, "REI"))
-        c2.metric("IF",   _val(touro, "IF"))
-        c3.metric("EFI",  f"{_val(touro, 'EFI')}%")
+        c2.metric("VP",   _val(touro, "VP"))
+        c3.metric("IF",   _val(touro, "IF"))
+        c4.metric("EFI",  f"{_val(touro, 'EFI')}%")
 
     with tab_conf:
         c1, c2, c3 = st.columns(3)
