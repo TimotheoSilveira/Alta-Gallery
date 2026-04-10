@@ -8,6 +8,7 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
+import re
 import pandas as pd
 from io import BytesIO
 
@@ -34,7 +35,6 @@ except Exception as e:
 st.markdown("""
 <style>
     .block-container { padding-top: 1.5rem; }
-
     .breed-badge {
         display: inline-block;
         padding: 3px 12px;
@@ -50,12 +50,10 @@ st.markdown("""
         line-height: 1.1;
         margin: 6px 0;
     }
-
-    /* Card compacto de progenie */
     .prog-nome {
         font-size: 0.85rem;
         font-weight: 700;
-        margin: 4px 0 2px 0;
+        margin: 6px 0 2px 0;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -63,15 +61,13 @@ st.markdown("""
     .prog-info {
         font-size: 0.72rem;
         color: #666;
-        margin: 0;
+        margin: 0 0 2px 0;
     }
     .prog-badge {
-        font-size: 0.70rem;
+        font-size: 0.72rem;
         color: #444;
-        margin: 2px 0;
+        margin: 1px 0;
     }
-
-    /* Miniatura de vídeo YouTube */
     .yt-thumb-wrap {
         position: relative;
         display: inline-block;
@@ -96,7 +92,6 @@ st.markdown("""
         justify-content: center;
         pointer-events: none;
     }
-
     footer { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
@@ -136,6 +131,63 @@ _defaults = {
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
+
+# ══════════════════════════════════════════════════════════════
+# HELPERS
+# ══════════════════════════════════════════════════════════════
+def _placeholder() -> str:
+    return "https://placehold.co/300x280/EEE/999?text=Sem+Foto"
+
+def _val(dados: dict, campo: str) -> str:
+    """Retorna valor do campo ou traço se vazio/nulo."""
+    v = dados.get(campo, "")
+    if v is None or str(v).strip() in ("", "nan", "None"):
+        return "—"
+    return str(v).strip()
+
+def _parse_ids(raw) -> list:
+    """
+    Converte string de IDs/URLs separados por vírgula em lista limpa.
+    Ex: "id1, id2" → ["id1", "id2"]
+    """
+    return [
+        i.strip() for i in str(raw).split(",")
+        if i.strip() and i.strip() not in ("nan", "None", "")
+    ]
+
+def _yt_video_id(url: str) -> str:
+    """
+    Extrai o ID de 11 caracteres de uma URL do YouTube.
+    Suporta:
+      https://www.youtube.com/watch?v=XXXXXXXXXXX
+      https://youtu.be/XXXXXXXXXXX
+      https://youtube.com/shorts/XXXXXXXXXXX
+    """
+    url = str(url).strip()
+    if not url or url in ("nan", "None", ""):
+        return ""
+    patterns = [
+        r"(?:v=)([a-zA-Z0-9_-]{11})",
+        r"(?:youtu\.be/)([a-zA-Z0-9_-]{11})",
+        r"(?:shorts/)([a-zA-Z0-9_-]{11})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return ""
+
+def _yt_thumbnail(video_id: str) -> str:
+    """Miniatura HD do YouTube."""
+    return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+
+def _yt_watch(video_id: str) -> str:
+    """URL de watch do YouTube."""
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+def _yt_embed(video_id: str) -> str:
+    """URL de embed do YouTube."""
+    return f"https://www.youtube.com/embed/{video_id}"
 
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR
@@ -185,55 +237,6 @@ if is_admin:
             st.rerun()
 
 # ══════════════════════════════════════════════════════════════
-# HELPERS
-# ══════════════════════════════════════════════════════════════
-def _placeholder() -> str:
-    return "https://placehold.co/300x280/EEE/999?text=Sem+Foto"
-
-def _val(dados: dict, campo: str) -> str:
-    """Retorna valor do campo ou traço se vazio/nulo."""
-    v = dados.get(campo, "")
-    if v is None or str(v).strip() in ("", "nan", "None"):
-        return "—"
-    return str(v).strip()
-
-def _parse_ids(raw) -> list:
-    """
-    Converte string de IDs/URLs separados por vírgula em lista limpa.
-    Ex: "id1, id2" → ["id1", "id2"]
-    """
-    return [
-        i.strip() for i in str(raw).split(",")
-        if i.strip() and i.strip() not in ("nan", "None", "")
-    ]
-
-def _yt_video_id(url: str) -> str:
-    """
-    Extrai o ID do vídeo de uma URL do YouTube.
-    Suporta:
-      https://www.youtube.com/watch?v=XXXXXXXXXXX
-      https://youtu.be/XXXXXXXXXXX
-    """
-    url = url.strip()
-    if "youtu.be/" in url:
-        return url.split("youtu.be/")[-1].split("?")[0]
-    if "watch?v=" in url:
-        return url.split("watch?v=")[-1.split("&")[0]
-    return url  # já pode ser só o ID
-
-def _yt_thumbnail(video_id: str) -> str:
-    """URL da miniatura HD do YouTube."""
-    return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
-
-def _yt_embed(video_id: str) -> str:
-    """URL de embed do YouTube."""
-    return f"https://www.youtube.com/embed/{video_id}"
-
-def _yt_watch(video_id: str) -> str:
-    """URL de watch do YouTube."""
-    return f"https://www.youtube.com/watch?v={video_id}"
-
-# ══════════════════════════════════════════════════════════════
 # GALERIA PRINCIPAL
 # ══════════════════════════════════════════════════════════════
 def render_galeria():
@@ -271,9 +274,7 @@ def render_galeria():
 
     if raca_sel != "Todas":
         codigo_raca = raca_sel.split(" - ")[0]
-        df = df[
-            df["Raça"].astype(str).str.strip() == codigo_raca
-        ]
+        df = df[df["Raça"].astype(str).str.strip() == codigo_raca]
 
     if df.empty:
         st.warning("Nenhum touro encontrado com os filtros aplicados.")
@@ -380,8 +381,10 @@ def render_touro_detail():
         foto_id = str(touro.get("foto_id", "")).strip()
         img = get_image_from_drive(foto_id) \
               if foto_id not in ("", "nan", "None") else None
-        st.image(img if img else _placeholder(),
-                 use_container_width=True)
+        st.image(
+            img if img else _placeholder(),
+            use_container_width=True
+        )
 
         # Download PDF
         prova_id = str(touro.get("prova_id", "")).strip()
@@ -506,7 +509,7 @@ def render_touro_detail():
 
 # ══════════════════════════════════════════════════════════════
 # GALERIA DE FILHAS — COMPACTA
-# Planilha progenies:
+# Colunas da aba progenies:
 #   id_progenie | id_touro_pai | nome | data_nascimento |
 #   proprietario | leite_lts | Classificação |
 #   fotos_ids | youtube_urls
@@ -549,34 +552,35 @@ def render_progenies():
     st.markdown(f"**{len(df_prog)} filha(s) cadastrada(s)**")
     st.divider()
 
-    # ── Grid 4 colunas — cards compactos ─────────────────────
-    COLUNAS = 4
-    cols = st.columns(COLUNAS, gap="small")
+    # ── Grid 4 colunas ────────────────────────────────────────
+    COLUNAS   = 4
+    grid_cols = st.columns(COLUNAS, gap="small")
 
     for idx, (_, prog) in enumerate(df_prog.iterrows()):
-        fotos_ids   = _parse_ids(prog.get("fotos_ids", ""))
-        yt_urls     = _parse_ids(prog.get("youtube_urls", ""))
-        yt_ids      = [_yt_video_id(u) for u in yt_urls if u]
 
-        with cols[idx % COLUNAS]:
+        # IDs de fotos e IDs de vídeos do YouTube
+        fotos_ids = _parse_ids(prog.get("fotos_ids", ""))
+        yt_urls   = _parse_ids(prog.get("youtube_urls", ""))
+        yt_ids    = [
+            vid for vid in (
+                _yt_video_id(u) for u in yt_urls
+            ) if vid
+        ]
+
+        with grid_cols[idx % COLUNAS]:
             with st.container(border=True):
 
-                # ── Mídia: fotos pequenas + thumb YouTube ─────
-                # Monta lista de mídias: primeiro fotos, depois YT
-                total_midias = len(fotos_ids) + len(yt_ids)
+                # ── Montar lista de mídias ────────────────────
+                # Formato: ("foto", drive_id) ou ("yt", yt_id)
+                midias = []
+                for fid in fotos_ids:
+                    midias.append(("foto", fid))
+                for yid in yt_ids:
+                    midias.append(("yt", yid))
 
-                if total_midias > 0:
-                    # Exibe até 2 itens por card para não ficar gigante
-                    # Se tiver mais, mostra contador
-                    midias_exibir = []
-
-                    for fid in fotos_ids:
-                        midias_exibir.append(("foto", fid))
-                    for yid in yt_ids:
-                        midias_exibir.append(("youtube", yid))
-
-                    # Primeira mídia ocupa largura total do card
-                    tipo, mid = midias_exibir[0]
+                # ── Exibir mídia principal ────────────────────
+                if midias:
+                    tipo, mid = midias[0]
 
                     if tipo == "foto":
                         img = get_image_from_drive(mid)
@@ -585,19 +589,23 @@ def render_progenies():
                             use_container_width=True
                         )
                     else:
-                        # Miniatura YouTube clicável
-                        thumb_url = _yt_thumbnail(mid)
-                        watch_url = _yt_watch(mid)
+                        # Miniatura do YouTube clicável
+                        thumb = _yt_thumbnail(mid)
+                        watch = _yt_watch(mid)
                         st.markdown(
                             f"""
-                            <a href="{watch_url}" target="_blank"
+                            <a href="{watch}" target="_blank"
                                title="▶ Assistir no YouTube">
                               <div class="yt-thumb-wrap">
-                                <img src="{thumb_url}"
-                                     style="width:100%;border-radius:6px"/>
+                                <img src="{thumb}"
+                                     style="width:100%;
+                                            border-radius:6px;"/>
                                 <div class="yt-play-btn">
-                                  <span style="color:white;font-size:14px;
-                                               margin-left:3px;">▶</span>
+                                  <span style="color:white;
+                                               font-size:14px;
+                                               margin-left:3px;">
+                                    ▶
+                                  </span>
                                 </div>
                               </div>
                             </a>
@@ -605,16 +613,12 @@ def render_progenies():
                             unsafe_allow_html=True
                         )
 
-                    # Se tiver mais de 1 mídia, exibe miniaturas extras
-                    # em linha pequena
-                    if len(midias_exibir) > 1:
-                        extras = midias_exibir[1:]
-                        n_ext  = min(len(extras), 3)
-                        ext_cols = st.columns(n_ext)
+                    # ── Miniaturas extras (até 3) ─────────────
+                    if len(midias) > 1:
+                        extras   = midias[1:4]   # máx 3 extras
+                        ext_cols = st.columns(len(extras))
 
-                        for i, (etipo, emid) in enumerate(
-                            extras[:n_ext]
-                        ):
+                        for i, (etipo, emid) in enumerate(extras):
                             with ext_cols[i]:
                                 if etipo == "foto":
                                     img2 = get_image_from_drive(emid)
@@ -623,30 +627,44 @@ def render_progenies():
                                             img2,
                                             use_container_width=True
                                         )
+                                    else:
+                                        st.image(
+                                            _placeholder(),
+                                            use_container_width=True
+                                        )
                                 else:
-                                    thumb2   = _yt_thumbnail(emid)
-                                    watch2   = _yt_watch(emid)
+                                    thumb2 = _yt_thumbnail(emid)
+                                    watch2 = _yt_watch(emid)
                                     st.markdown(
                                         f"""
                                         <a href="{watch2}"
                                            target="_blank">
-                                          <img src="{thumb2}"
-                                               style="width:100%;
-                                               border-radius:4px"/>
+                                          <div class="yt-thumb-wrap">
+                                            <img src="{thumb2}"
+                                                 style="width:100%;
+                                                 border-radius:4px;"/>
+                                            <div class="yt-play-btn"
+                                                 style="width:24px;
+                                                        height:24px;">
+                                              <span style="color:white;
+                                                           font-size:10px;
+                                                           margin-left:2px;">
+                                                ▶
+                                              </span>
+                                            </div>
+                                          </div>
                                         </a>
                                         """,
                                         unsafe_allow_html=True
                                     )
 
-                        # Contador de mídias extras além das exibidas
-                        total_extras = total_midias - 1 - n_ext
-                        if total_extras > 0:
-                            st.caption(
-                                f"📷 +{total_extras} mídia(s)"
-                            )
+                        # Contador de excedentes
+                        total_extra = len(midias) - 4
+                        if total_extra > 0:
+                            st.caption(f"📷 +{total_extra} mídia(s)")
 
                 else:
-                    # Sem mídia
+                    # Nenhuma mídia
                     st.image(_placeholder(), use_container_width=True)
 
                 # ── Dados da progenie ─────────────────────────
@@ -678,7 +696,7 @@ def render_progenies():
                         unsafe_allow_html=True
                     )
 
-                # Botão assistir vídeo completo (se tiver YT)
+                # Botão ver vídeo completo
                 if yt_ids:
                     st.link_button(
                         "▶ Ver vídeo",
@@ -713,7 +731,7 @@ def render_admin():
                 use_container_width=True,
             )
         else:
-            st.warning("⚠️ sheet_id não configurado.")
+            st.warning("⚠️ sheet_id não configurado nos secrets.")
 
     with col2:
         st.markdown("### 📁 Pastas Google Drive")
@@ -722,21 +740,21 @@ def render_admin():
             if drive.get("pasta_touros"):
                 st.link_button(
                     "🐂 Fotos de Touros",
-                    f"https://drive.google.com/drive/folders/"
+                    "https://drive.google.com/drive/folders/"
                     f"{drive['pasta_touros']}",
                     use_container_width=True,
                 )
             if drive.get("pasta_progenies"):
                 st.link_button(
                     "🐄 Fotos de Filhas",
-                    f"https://drive.google.com/drive/folders/"
+                    "https://drive.google.com/drive/folders/"
                     f"{drive['pasta_progenies']}",
                     use_container_width=True,
                 )
             if drive.get("pasta_pdfs"):
                 st.link_button(
                     "📄 PDFs das Provas",
-                    f"https://drive.google.com/drive/folders/"
+                    "https://drive.google.com/drive/folders/"
                     f"{drive['pasta_pdfs']}",
                     use_container_width=True,
                 )
@@ -760,34 +778,26 @@ def render_admin():
 
     with st.expander("📄 Colunas da aba **touros**"):
         st.code(
-            "Código NAAB | InterRegNumber | Nome | Nome completo | "
-            "Raça | foto_id | prova_id | TPI | NM$ | CM$ | FM$ | GM$ | "
-            "Leite | Proteína | Prot% | Gordura | % Gordura | CGP | "
-            "VP | REI | IF | PTAT | MUI | CUB | Kapa-Caseína | "
-            "Beta-Caseína | EFI | Birth Date | Prova",
+            "Código NAAB | InterRegNumber | Nome | Nome completo |\n"
+            "Raça | foto_id | prova_id | TPI | NM$ | CM$ | FM$ |\n"
+            "GM$ | Leite | Proteína | Prot% | Gordura | % Gordura |\n"
+            "CGP | VP | REI | IF | PTAT | MUI | CUB |\n"
+            "Kapa-Caseína | Beta-Caseína | EFI | Birth Date | Prova",
             language="text"
         )
 
     with st.expander("📄 Colunas da aba **progenies**"):
         st.code(
-            "id_progenie | id_touro_pai | nome | data_nascimento | "
-            "proprietario | leite_lts | Classificação | "
+            "id_progenie | id_touro_pai | nome | data_nascimento |\n"
+            "proprietario | leite_lts | Classificação |\n"
             "fotos_ids | youtube_urls",
             language="text"
         )
-
-    with st.expander("💡 Como preencher youtube_urls"):
-        st.markdown("""
-        Cole o link do YouTube na coluna `youtube_urls`.
-        Para múltiplos vídeos, separe por vírgula:
-
-        ```
-        https://youtu.be/ABC123, https://youtu.be/XYZ456
-        ```
-
-        **Dica:** Use vídeos **não listados** no YouTube para
-        que apenas quem tiver o link possa assistir.
-        """)
+        st.caption(
+            "💡 **fotos_ids** → IDs do Drive separados por vírgula  \n"
+            "💡 **youtube_urls** → links do YouTube separados por vírgula  \n"
+            "Ex: https://youtu.be/ABC123, https://youtu.be/XYZ456"
+        )
 
 
 # ══════════════════════════════════════════════════════════════
