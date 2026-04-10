@@ -1,179 +1,135 @@
 # drive_utils.py
+# Versão SEM Google Cloud, SEM Service Account
+# Usa apenas links públicos do Google Drive
+
 import streamlit as st
-import gspread
 import pandas as pd
 import requests
+import gspread
 from PIL import Image
 from io import BytesIO
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 from typing import Optional
+from google.oauth2.service_account import Credentials
 
-SCOPES = [
-    "https://www.googleapis.com/auth/drive",
-    "https://www.googleapis.com/auth/spreadsheets",
-]
-
-# ─── Credenciais ──────────────────────────────────────────────────────────────
-
-@st.cache_resource
-def get_credentials():
-    """Carrega credenciais da service account via secrets.toml."""
-    return service_account.Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=SCOPES
-    )
-
-@st.cache_resource
-def get_drive_service():
-    return build("drive", "v3", credentials=get_credentials())
-
-@st.cache_resource
-def get_sheets_client():
-    return gspread.authorize(get_credentials())
-
-# ─── Google Sheets: Leitura ───────────────────────────────────────────────────
-
-@st.cache_data(ttl=300)  # Cache de 5 minutos - suporta 1000 touros
-def load_touros() -> pd.DataFrame:
-    """Carrega todos os touros do Google Sheets."""
-    gc = get_sheets_client()
-    sheet_id = st.secrets["sheets"]["sheet_id"]
-    ws = gc.open_by_key(sheet_id).worksheet(
-        st.secrets["sheets"]["aba_touros"]
-    )
-    data = ws.get_all_records()
-    return pd.DataFrame(data) if data else pd.DataFrame()
-
-
-@st.cache_data(ttl=300)
-def load_progenies(id_touro: str) -> pd.DataFrame:
-    """Carrega progênies de um touro específico."""
-    gc = get_sheets_client()
-    sheet_id = st.secrets["sheets"]["sheet_id"]
-    ws = gc.open_by_key(sheet_id).worksheet(
-        st.secrets["sheets"]["aba_progenies"]
-    )
-    data = ws.get_all_records()
-    df = pd.DataFrame(data) if data else pd.DataFrame()
-
-    if df.empty:
-        return df
-    return df[df["id_touro_pai"] == id_touro].reset_index(drop=True)
-
-
-# ─── Google Sheets: Escrita (Admin) ──────────────────────────────────────────
-
-def insert_touro(dados: dict) -> bool:
-    """Insere novo touro no Google Sheets."""
-    try:
-        gc = get_sheets_client()
-        sheet_id = st.secrets["sheets"]["sheet_id"]
-        ws = gc.open_by_key(sheet_id).worksheet(
-            st.secrets["sheets"]["aba_touros"]
-        )
-        # Garante a ordem das colunas
-        headers = ws.row_values(1)
-        row = [dados.get(h, "") for h in headers]
-        ws.append_row(row, value_input_option="USER_ENTERED")
-
-        # Invalida cache após inserção
-        load_touros.clear()
-        return True
-    except Exception as e:
-        st.error(f"Erro ao inserir touro: {e}")
-        return False
-
-
-def insert_progenie(dados: dict) -> bool:
-    """Insere nova progênie no Google Sheets."""
-    try:
-        gc = get_sheets_client()
-        sheet_id = st.secrets["sheets"]["sheet_id"]
-        ws = gc.open_by_key(sheet_id).worksheet(
-            st.secrets["sheets"]["aba_progenies"]
-        )
-        headers = ws.row_values(1)
-        row = [dados.get(h, "") for h in headers]
-        ws.append_row(row, value_input_option="USER_ENTERED")
-        load_progenies.clear()
-        return True
-    except Exception as e:
-        st.error(f"Erro ao inserir progênie: {e}")
-        return False
-
-
-# ─── Google Drive: Imagens e PDFs ────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# IMAGENS E PDFs — via link público do Drive
+# ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=600)
 def get_image_from_drive(file_id: str) -> Optional[Image.Image]:
     """
-    Baixa imagem do Google Drive.
-    Usa link de exportação direto - arquivo deve ter acesso "Qualquer pessoa com o link".
+    Baixa imagem do Google Drive via link público.
+    O arquivo deve estar compartilhado como 'Qualquer pessoa com o link'.
+
+    Args:
+        file_id: ID do arquivo no Drive
+                 (parte da URL: drive.google.com/file/d/[FILE_ID]/view)
     """
-    if not file_id:
+    if not file_id or not file_id.strip():
         return None
-    try:
-        url = f"https://drive.google.com/uc?export=download&id={file_id}"
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            return Image.open(BytesIO(response.content))
-    except Exception:
-        pass
+
+    # Tenta primeiro com o link de exportação direto
+    urls = [
+        f"https://drive.google.com/uc?export=download&id={file_id}",
+        f"https://drive.google.com/uc?id={file_id}",
+        f"https://lh3.googleusercontent.com/d/{file_id}",
+    ]
+
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    for url in urls:
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+
+            # Verifica se retornou uma imagem (não uma página HTML)
+            content_type = response.headers.get("Content-Type", "")
+            if response.status_code == 200 and "image" in content_type:
+                return Image.open(BytesIO(response.content))
+
+        except Exception:
+            continue
+
     return None
 
 
+@st.cache_data(ttl=600)
 def get_pdf_bytes_from_drive(file_id: str) -> Optional[bytes]:
-    """Baixa PDF do Google Drive e retorna bytes para download."""
-    if not file_id:
+    """
+    Baixa PDF do Google Drive via link público.
+    Retorna bytes prontos para st.download_button.
+    """
+    if not file_id or not file_id.strip():
         return None
+
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+
     try:
-        service = get_drive_service()
-        request = service.files().get_media(fileId=file_id)
-        file_bytes = BytesIO()
-        from googleapiclient.http import MediaIoBaseDownload
-        downloader = MediaIoBaseDownload(file_bytes, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        return file_bytes.getvalue()
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 200:
+            return response.content
     except Exception as e:
-        st.error(f"Erro ao baixar PDF: {e}")
-        return None
+        st.warning(f"⚠️ Não foi possível baixar o PDF: {e}")
+
+    return None
 
 
-def upload_file_to_drive(
-    file_bytes: bytes,
-    filename: str,
-    folder_id: str,
-    mimetype: str = "image/jpeg"
-) -> Optional[str]:
+# ══════════════════════════════════════════════════════════════════════════════
+# GOOGLE SHEETS — via link público (somente leitura)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=300)
+def load_touros() -> pd.DataFrame:
     """
-    Faz upload de arquivo (imagem ou PDF) para pasta do Drive.
-    Retorna o file_id do arquivo criado.
+    Lê os dados dos touros direto do Google Sheets público.
+    A planilha deve estar compartilhada como 'Qualquer pessoa com o link'.
     """
     try:
-        service = get_drive_service()
-        file_metadata = {"name": filename, "parents": [folder_id]}
-        media = MediaIoBaseUpload(
-            BytesIO(file_bytes),
-            mimetype=mimetype,
-            resumable=True
+        sheet_id  = st.secrets["sheets"]["sheet_id"]
+        aba       = st.secrets["sheets"]["aba_touros"]
+
+        # URL de exportação CSV do Google Sheets (sem autenticação)
+        url = (
+            f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+            f"/gviz/tq?tqx=out:csv&sheet={aba}"
         )
-        file = service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields="id"
-        ).execute()
 
-        # Tornar arquivo publicamente legível
-        service.permissions().create(
-            fileId=file["id"],
-            body={"type": "anyone", "role": "reader"}
-        ).execute()
+        df = pd.read_csv(url)
+        df.columns = df.columns.str.strip()  # Remove espaços dos headers
+        return df
 
-        return file.get("id")
     except Exception as e:
-        st.error(f"Erro no upload: {e}")
-        return None
+        st.error(f"❌ Erro ao carregar touros: {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_progenies(id_touro: str) -> pd.DataFrame:
+    """
+    Lê os dados das progênies direto do Google Sheets público.
+    Filtra pelo id do touro pai.
+    """
+    try:
+        sheet_id = st.secrets["sheets"]["sheet_id"]
+        aba      = st.secrets["sheets"]["aba_progenies"]
+
+        url = (
+            f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+            f"/gviz/tq?tqx=out:csv&sheet={aba}"
+        )
+
+        df = pd.read_csv(url)
+        df.columns = df.columns.str.strip()
+
+        if df.empty or "id_touro_pai" not in df.columns:
+            return pd.DataFrame()
+
+        return df[
+            df["id_touro_pai"].astype(str) == str(id_touro)
+        ].reset_index(drop=True)
+
+    except Exception as e:
+        st.error(f"❌ Erro ao carregar progênies: {e}")
+        return pd.DataFrame()
