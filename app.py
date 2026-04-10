@@ -49,6 +49,12 @@ st.markdown("""
         line-height: 1.1;
         margin: 6px 0;
     }
+    .prog-card {
+        background: #FAFAFA;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 24px;
+    }
     footer { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
@@ -64,10 +70,14 @@ BREED_CONFIG = {
 }
 
 def get_breed_color(raca: str) -> str:
-    return BREED_CONFIG.get(str(raca).strip().upper(), {}).get("cor", "#37474F")
+    return BREED_CONFIG.get(
+        str(raca).strip().upper(), {}
+    ).get("cor", "#37474F")
 
 def get_breed_name(raca: str) -> str:
-    return BREED_CONFIG.get(str(raca).strip().upper(), {}).get("nome", raca)
+    return BREED_CONFIG.get(
+        str(raca).strip().upper(), {}
+    ).get("nome", raca)
 
 # ══════════════════════════════════════════════════════════════
 # SESSION STATE
@@ -84,6 +94,50 @@ _defaults = {
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
+
+# ══════════════════════════════════════════════════════════════
+# HELPERS
+# ══════════════════════════════════════════════════════════════
+def _placeholder() -> str:
+    return "https://placehold.co/300x280/EEE/999?text=Sem+Foto"
+
+def _val(dados: dict, campo: str) -> str:
+    """Retorna valor do campo ou traço se vazio/nulo."""
+    v = dados.get(campo, "")
+    if v is None or str(v).strip() in ("", "nan", "None"):
+        return "—"
+    return str(v).strip()
+
+def _parse_ids(raw: str) -> list:
+    """
+    Converte string de IDs separados por vírgula em lista limpa.
+    Ex: "id1, id2, id3" → ["id1", "id2", "id3"]
+    """
+    return [
+        i.strip() for i in str(raw).split(",")
+        if i.strip() and i.strip() not in ("nan", "None", "")
+    ]
+
+def _youtube_video_id(url: str) -> str:
+    """
+    Extrai o ID do vídeo de uma URL do YouTube.
+    Suporta:
+      https://www.youtube.com/watch?v=XXXXXXXXXXX
+      https://youtu.be/XXXXXXXXXXX
+    """
+    url = str(url).strip()
+    if "youtu.be/" in url:
+        return url.split("youtu.be/")[-1].split("?")[0].strip()
+    if "watch?v=" in url:
+        return url.split("watch?v=")[-1].split("&")[0].strip()
+    return ""
+
+def _youtube_embed_url(video_id: str) -> str:
+    return f"https://www.youtube.com/embed/{video_id}"
+
+def _youtube_thumbnail_url(video_id: str) -> str:
+    """Thumbnail de alta qualidade do YouTube."""
+    return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
 
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR
@@ -130,41 +184,14 @@ if is_admin:
             st.rerun()
 
 # ══════════════════════════════════════════════════════════════
-# HELPERS
-# ══════════════════════════════════════════════════════════════
-def _placeholder():
-    return "https://placehold.co/300x280/EEE/999?text=Sem+Foto"
-
-def _val(dados: dict, campo: str) -> str:
-    """Retorna valor do campo ou traço se vazio/nulo."""
-    v = dados.get(campo, "")
-    if v is None or str(v).strip() in ("", "nan", "None"):
-        return "—"
-    return str(v)
-
-def _parse_ids(raw: str) -> list:
-    """
-    Converte string de IDs separados por vírgula em lista limpa.
-    Ex: "id1, id2, id3" → ["id1", "id2", "id3"]
-    """
-    return [
-        i.strip() for i in str(raw).split(",")
-        if i.strip() and i.strip() not in ("nan", "None", "")
-    ]
-
-def _drive_video_url(file_id: str) -> str:
-    """
-    Monta URL de preview de vídeo do Google Drive.
-    O arquivo DEVE estar compartilhado publicamente.
-    """
-    return f"https://drive.google.com/file/d/{file_id}/preview"
-
-# ══════════════════════════════════════════════════════════════
 # GALERIA PRINCIPAL
 # ══════════════════════════════════════════════════════════════
 def render_galeria():
     st.markdown("# 🐂 Alta Gallery")
-    st.caption("Selecione um touro para ver a prova completa e a galeria de filhas.")
+    st.caption(
+        "Selecione um touro para ver a prova completa "
+        "e a galeria de filhas."
+    )
     st.divider()
 
     with st.spinner("Carregando touros..."):
@@ -185,7 +212,8 @@ def render_galeria():
     if busca:
         mask = (
             df.get("Nome", pd.Series(dtype=str))
-              .astype(str).str.lower().str.contains(busca, na=False) |
+              .astype(str).str.lower().str.contains(busca, na=False)
+            |
             df.get("InterRegNumber", pd.Series(dtype=str))
               .astype(str).str.lower().str.contains(busca, na=False)
         )
@@ -304,20 +332,22 @@ def render_touro_detail():
 
         # Download PDF
         prova_id = str(touro.get("prova_id", "")).strip()
-        if prova_id and prova_id not in ("nan", "None"):
+        if prova_id and prova_id not in ("", "nan", "None"):
             with st.spinner("Preparando PDF..."):
                 pdf_bytes = get_pdf_bytes_from_drive(prova_id)
             if pdf_bytes:
                 st.download_button(
                     label="📥 Baixar Prova (PDF)",
                     data=pdf_bytes,
-                    file_name=f"{touro.get('Código NAAB','touro')}_prova.pdf",
+                    file_name=(
+                        f"{touro.get('Código NAAB','touro')}_prova.pdf"
+                    ),
                     mime="application/pdf",
                     use_container_width=True,
                 )
 
     with col_info:
-        # ── Índices econômicos ────────────────────────────────
+        # Índices econômicos
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("TPI", _val(touro, "TPI"))
         c2.metric("NM$", f"${_val(touro, 'NM$')}")
@@ -330,8 +360,12 @@ def render_touro_detail():
         col_a, col_b = st.columns(2)
         with col_a:
             st.markdown(f"**📅 Nascimento:** {_val(touro, 'Birth Date')}")
-            st.markdown(f"**🧬 Kapa-Caseína:** {_val(touro, 'Kapa-Caseína')}")
-            st.markdown(f"**🧬 Beta-Caseína:** {_val(touro, 'Beta-Caseína')}")
+            st.markdown(
+                f"**🧬 Kapa-Caseína:** {_val(touro, 'Kapa-Caseína')}"
+            )
+            st.markdown(
+                f"**🧬 Beta-Caseína:** {_val(touro, 'Beta-Caseína')}"
+            )
         with col_b:
             st.markdown(f"**📊 EFI:** {_val(touro, 'EFI')}%")
             st.markdown(f"**🏷️ PTAT:** {_val(touro, 'PTAT')}")
@@ -348,65 +382,64 @@ def render_touro_detail():
 
     with tab_prod:
         st.markdown("##### 🥛 Produção Leiteira")
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Leite (Lbs)",    _val(touro, "Leite"))
-        c2.metric("Gordura (Lbs)",  _val(touro, "Gordura"))
-        c3.metric("% Gordura",      _val(touro, "% Gordura"))
-        c4.metric("Proteína (Lbs)", _val(touro, "Proteína"))
-        c5.metric("% Proteína",     _val(touro, "Prot%"))
+        p1, p2, p3, p4, p5 = st.columns(5)
+        p1.metric("Leite (Lbs)",    _val(touro, "Leite"))
+        p2.metric("Gordura (Lbs)",  _val(touro, "Gordura"))
+        p3.metric("% Gordura",      _val(touro, "% Gordura"))
+        p4.metric("Proteína (Lbs)", _val(touro, "Proteína"))
+        p5.metric("% Proteína",     _val(touro, "Prot%"))
 
         st.divider()
 
         st.markdown("##### 📊 Índices Complementares")
-        c6, c7, c8, c9 = st.columns(4)
-        c6.metric("CGP", _val(touro, "CGP"))
-        c7.metric("VP",  _val(touro, "VP"))
-        c8.metric("CUB", _val(touro, "CUB"))
-        c9.metric("EFI", f"{_val(touro, 'EFI')}%")
+        p6, p7, p8, p9 = st.columns(4)
+        p6.metric("CGP", _val(touro, "CGP"))
+        p7.metric("VP",  _val(touro, "VP"))
+        p8.metric("CUB", _val(touro, "CUB"))
+        p9.metric("EFI", f"{_val(touro, 'EFI')}%")
 
     with tab_saude:
         st.markdown("##### ❤️ Saúde & Eficiência Reprodutiva")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("REI", _val(touro, "REI"))
-        c2.metric("IF",  _val(touro, "IF"))
-        c3.metric("VP",  _val(touro, "VP"))
+        s1, s2, s3 = st.columns(3)
+        s1.metric("REI", _val(touro, "REI"))
+        s2.metric("IF",  _val(touro, "IF"))
+        s3.metric("VP",  _val(touro, "VP"))
 
     with tab_conf:
-        st.markdown("##### 📐 Índices Gerais de Conformação")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("PTAT", _val(touro, "PTAT"))
-        c2.metric("MUI",  _val(touro, "MUI"))
-        c3.metric("CUB",  _val(touro, "CUB"))
+        st.markdown("##### 📐 Índices Gerais")
+        t1, t2, t3 = st.columns(3)
+        t1.metric("PTAT", _val(touro, "PTAT"))
+        t2.metric("MUI",  _val(touro, "MUI"))
+        t3.metric("CUB",  _val(touro, "CUB"))
 
         st.divider()
 
         st.markdown("##### 🦵 Pernas & Pés")
-        d1, d2, d3 = st.columns(3)
-        d1.metric("Pernas Lateral", _val(touro, "RLSV"))
-        d2.metric("Pernas Post.",   _val(touro, "RLRV"))
-        d3.metric("Ângulo Pé",      _val(touro, "Ângulo Pé"))
+        u1, u2, u3 = st.columns(3)
+        u1.metric("Pernas Lateral", _val(touro, "RLSV"))
+        u2.metric("Pernas Post.",   _val(touro, "RLRV"))
+        u3.metric("Ângulo Pé",      _val(touro, "Ângulo Pé"))
 
         st.divider()
 
         st.markdown("##### 🐄 Úbere")
-        e1, e2, e3, e4, e5 = st.columns(5)
-        e1.metric("Lig. Úb. Ant.",   _val(touro, "Lig. Úbere Ant."))
-        e2.metric("Alt. Úb. Post.",  _val(touro, "R Udder Height"))
-        e3.metric("Larg. Úb. Post.", _val(touro, "Larg. Úbere Post."))
-        e4.metric("Lig. Susp.",      _val(touro, "Ligamento Susp."))
-        e5.metric("Prof. Úbere",     _val(touro, "Prof Úbere"))
+        v1, v2, v3, v4, v5 = st.columns(5)
+        v1.metric("Lig. Úb. Ant.",   _val(touro, "Lig. Úbere Ant."))
+        v2.metric("Alt. Úb. Post.",  _val(touro, "R Udder Height"))
+        v3.metric("Larg. Úb. Post.", _val(touro, "Larg. Úbere Post."))
+        v4.metric("Lig. Susp.",      _val(touro, "Ligamento Susp."))
+        v5.metric("Prof. Úbere",     _val(touro, "Prof Úbere"))
 
         st.divider()
 
         st.markdown("##### 🔬 Tetos")
-        f1, f2, f3 = st.columns(3)
-        f1.metric("Pos. Teto Ant.",  _val(touro, "FTP"))
-        f2.metric("Pos. Teto Post.", _val(touro, "RTP"))
-        f3.metric("Comp. Tetos",     _val(touro, "Comp. Tetos"))
+        w1, w2, w3 = st.columns(3)
+        w1.metric("Pos. Teto Ant.",  _val(touro, "FTP"))
+        w2.metric("Pos. Teto Post.", _val(touro, "RTP"))
+        w3.metric("Comp. Tetos",     _val(touro, "Comp. Tetos"))
 
     st.divider()
 
-    # ── Botão galeria de filhas ───────────────────────────────
     if st.button(
         "🐄 Ver Galeria de Filhas",
         use_container_width=True,
@@ -418,6 +451,10 @@ def render_touro_detail():
 
 # ══════════════════════════════════════════════════════════════
 # GALERIA DE FILHAS (PROGENIES)
+# Colunas da aba progenies:
+#   id_progenie | id_touro_pai | nome | data_nascimento |
+#   proprietario | leite_lts | Classificação |
+#   fotos_ids | youtube_url
 # ══════════════════════════════════════════════════════════════
 def render_progenies():
     touro = st.session_state.get("touro_sel")
@@ -443,7 +480,9 @@ def render_progenies():
 
     with st.spinner("Carregando filhas..."):
         try:
-            df_prog = load_progenies(str(touro.get("Código NAAB", "")))
+            df_prog = load_progenies(
+                str(touro.get("Código NAAB", ""))
+            )
         except Exception as e:
             st.error(f"❌ Erro ao carregar filhas: {e}")
             return
@@ -455,55 +494,59 @@ def render_progenies():
     st.markdown(f"**{len(df_prog)} filha(s) cadastrada(s)**")
     st.divider()
 
+    # ── Uma progenie por vez ──────────────────────────────────
     for idx, (_, prog) in enumerate(df_prog.iterrows()):
         with st.container(border=True):
 
-            # ── Cabeçalho da progenie ─────────────────────────
-            st.markdown(f"### 🐄 {prog.get('nome', 'Sem nome')}")
-            st.caption(
-                f"📅 {prog.get('data_nascimento', '—')}  ·  "
-                f"🏠 {prog.get('proprietario', '—')}"
+            # ── Cabeçalho ─────────────────────────────────────
+            st.markdown(f"### 🐄 {_val(prog, 'nome')}")
+
+            info1, info2, info3 = st.columns(3)
+            info1.markdown(
+                f"📅 **Nascimento:** {_val(prog, 'data_nascimento')}"
+            )
+            info2.markdown(
+                f"🏠 **Propriedade:** {_val(prog, 'proprietario')}"
+            )
+            info3.markdown(
+                f"🥛 **Produção:** {_val(prog, 'leite_lts')} L/Lact."
             )
 
-            leite = str(prog.get("leite_lts", "")).strip()
-            clf   = str(prog.get("Classificação", "")).strip()
-
-            info1, info2 = st.columns(2)
-            with info1:
-                if leite and leite not in ("nan", "None"):
-                    st.markdown(f"🥛 **Produção:** {leite} L/Lact.")
-            with info2:
-                if clf and clf not in ("nan", "None"):
-                    st.markdown(f"📋 **Classificação:** {clf}")
+            clf = _val(prog, "Classificação")
+            if clf != "—":
+                st.markdown(f"📋 **Classificação:** {clf}")
 
             st.divider()
 
-            # ── Fotos ─────────────────────────────────────────
-            fotos_ids  = _parse_ids(prog.get("fotos_ids", ""))
-            videos_ids = _parse_ids(prog.get("videos_ids", ""))
+            # ── Fotos + Vídeo lado a lado ──────────────────────
+            fotos_ids   = _parse_ids(prog.get("fotos_ids", ""))
+            youtube_raw = str(prog.get("youtube_url", "")).strip()
+            video_id    = _youtube_video_id(youtube_raw) \
+                          if youtube_raw not in ("", "nan", "None") \
+                          else ""
 
-            tem_foto  = len(fotos_ids)  > 0
-            tem_video = len(videos_ids) > 0
+            tem_foto  = len(fotos_ids) > 0
+            tem_video = bool(video_id)
 
             if tem_foto or tem_video:
 
-                # Abas Fotos / Vídeos
-                abas = []
+                if tem_foto and tem_video:
+                    # ── Layout: fotos à esquerda, vídeo à direita ──
+                    col_fotos, col_video = st.columns([3, 2], gap="medium")
+                elif tem_foto:
+                    col_fotos = st.container()
+                    col_video = None
+                else:
+                    col_fotos = None
+                    col_video = st.container()
+
+                # ── FOTOS ─────────────────────────────────────
                 if tem_foto:
-                    abas.append(f"📸 Fotos ({len(fotos_ids)})")
-                if tem_video:
-                    abas.append(f"🎥 Vídeos ({len(videos_ids)})")
+                    with col_fotos:
+                        st.markdown("**📸 Fotos**")
 
-                tabs = st.tabs(abas)
-                aba_idx = 0
-
-                # ── ABA FOTOS ─────────────────────────────────
-                if tem_foto:
-                    with tabs[aba_idx]:
-                        aba_idx += 1
-
-                        # Grid de fotos — máx 4 por linha
-                        n_cols = min(len(fotos_ids), 4)
+                        # Divide fotos em linhas de até 3
+                        n_cols = min(len(fotos_ids), 3)
                         foto_cols = st.columns(n_cols, gap="small")
 
                         for i, fid in enumerate(fotos_ids):
@@ -515,18 +558,22 @@ def render_progenies():
                                         use_container_width=True,
                                         caption=f"Foto {i+1}"
                                     )
-                                    # Botão download individual
+                                    # Download individual
                                     buf = BytesIO()
-                                    img.save(buf, format="JPEG", quality=90)
+                                    img.save(
+                                        buf,
+                                        format="JPEG",
+                                        quality=90
+                                    )
                                     st.download_button(
                                         label="⬇️ Baixar",
                                         data=buf.getvalue(),
                                         file_name=(
-                                            f"{prog.get('nome','filha')}"
+                                            f"{_val(prog,'nome')}"
                                             f"_foto{i+1}.jpg"
                                         ),
                                         mime="image/jpeg",
-                                        key=f"dl_foto_{idx}_{i}",
+                                        key=f"dl_{idx}_{i}",
                                         use_container_width=True,
                                     )
                                 else:
@@ -536,38 +583,44 @@ def render_progenies():
                                         caption=f"Foto {i+1} indisponível"
                                     )
 
-                # ── ABA VÍDEOS ────────────────────────────────
+                # ── VÍDEO ─────────────────────────────────────
                 if tem_video:
-                    with tabs[aba_idx]:
-                        for i, vid in enumerate(videos_ids):
-                            st.markdown(f"**🎥 Vídeo {i+1}**")
+                    with col_video:
+                        st.markdown("**🎥 Vídeo**")
 
-                            # Player embed do Google Drive
-                            video_url = _drive_video_url(vid)
-                            st.markdown(
-                                f"""
-                                <iframe
-                                    src="{video_url}"
-                                    width="100%"
-                                    height="400"
-                                    allow="autoplay"
-                                    style="border:none; border-radius:8px;"
-                                ></iframe>
-                                """,
-                                unsafe_allow_html=True
-                            )
+                        # Miniatura clicável do YouTube
+                        thumb_url  = _youtube_thumbnail_url(video_id)
+                        embed_url  = _youtube_embed_url(video_id)
+                        watch_url  = f"https://www.youtube.com/watch?v={video_id}"
 
-                            # Link direto como fallback
-                            st.markdown(
-                                f"[🔗 Abrir vídeo no Drive]"
-                                f"(https://drive.google.com/file/d/{vid}/view)",
-                                unsafe_allow_html=False
-                            )
+                        # Player embutido
+                        st.markdown(
+                            f"""
+                            <iframe
+                                src="{embed_url}"
+                                width="100%"
+                                height="280"
+                                frameborder="0"
+                                allow="accelerometer; autoplay;
+                                       clipboard-write; encrypted-media;
+                                       gyroscope; picture-in-picture"
+                                allowfullscreen
+                                style="border-radius:8px;"
+                            ></iframe>
+                            """,
+                            unsafe_allow_html=True
+                        )
 
-                            if i < len(videos_ids) - 1:
-                                st.divider()
+                        # Link direto como fallback
+                        st.markdown(
+                            f"[🔗 Abrir no YouTube]({watch_url})"
+                        )
+
             else:
-                st.info("📷 Nenhuma foto ou vídeo cadastrado para esta filha.")
+                st.info(
+                    "📷 Nenhuma foto ou vídeo cadastrado "
+                    "para esta filha ainda."
+                )
 
         # Espaço entre progenies
         st.markdown("<br>", unsafe_allow_html=True)
@@ -581,7 +634,8 @@ def render_admin():
     st.divider()
 
     st.info(
-        f"👋 Bem-vindo, **{st.session_state.get('admin_user', 'Admin')}**!  \n"
+        f"👋 Bem-vindo, "
+        f"**{st.session_state.get('admin_user', 'Admin')}**!  \n"
         "Para adicionar ou editar touros e filhas, acesse "
         "diretamente a planilha e as pastas do Drive abaixo."
     )
@@ -589,20 +643,17 @@ def render_admin():
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("### 📊 Planilha de Touros & Filhas")
+        st.markdown("### 📊 Planilha")
         sheet_id = st.secrets.get("sheets", {}).get("sheet_id", "")
         if sheet_id:
-            url_sheet = (
-                f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
-            )
             st.link_button(
-                "📝 Abrir Planilha Google Sheets",
-                url_sheet,
+                "📝 Abrir Google Sheets",
+                f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit",
                 use_container_width=True,
             )
 
     with col2:
-        st.markdown("### 📁 Pastas do Google Drive")
+        st.markdown("### 📁 Google Drive")
         try:
             pasta_touros = st.secrets["drive"].get("pasta_touros", "")
             pasta_prog   = st.secrets["drive"].get("pasta_progenies", "")
@@ -610,29 +661,30 @@ def render_admin():
 
             if pasta_touros:
                 st.link_button(
-                    "🐂 Pasta — Fotos de Touros",
+                    "🐂 Fotos de Touros",
                     f"https://drive.google.com/drive/folders/{pasta_touros}",
                     use_container_width=True,
                 )
             if pasta_prog:
                 st.link_button(
-                    "🐄 Pasta — Fotos & Vídeos de Filhas",
+                    "🐄 Fotos de Filhas",
                     f"https://drive.google.com/drive/folders/{pasta_prog}",
                     use_container_width=True,
                 )
             if pasta_pdfs:
                 st.link_button(
-                    "📄 Pasta — PDFs das Provas",
+                    "📄 PDFs das Provas",
                     f"https://drive.google.com/drive/folders/{pasta_pdfs}",
                     use_container_width=True,
                 )
         except Exception:
-            st.warning("⚠️ Pastas do Drive não configuradas nos secrets.")
+            st.warning(
+                "⚠️ Pastas do Drive não configuradas nos secrets."
+            )
 
     st.divider()
 
-    # ── Limpar cache ──────────────────────────────────────────
-    st.markdown("### 🔄 Atualizar Dados")
+    st.markdown("### 🔄 Cache")
     st.caption(
         "Após editar a planilha, limpe o cache para "
         "ver as mudanças imediatamente."
@@ -640,6 +692,34 @@ def render_admin():
     if st.button("🗑️ Limpar Cache", use_container_width=True):
         st.cache_data.clear()
         st.success("✅ Cache limpo! Recarregue a galeria.")
+
+    st.divider()
+
+    # ── Estrutura das abas ────────────────────────────────────
+    st.markdown("### 📋 Estrutura das Abas")
+
+    with st.expander("📄 Colunas da aba **touros**"):
+        st.code(
+            "Código NAAB | InterRegNumber | Nome | Nome completo | Raça |\n"
+            "foto_id | prova_id | TPI | NM$ | CM$ | FM$ | GM$ |\n"
+            "Leite | Proteína | Prot% | Gordura | % Gordura |\n"
+            "CGP | VP | REI | IF | PTAT | MUI | CUB |\n"
+            "Kapa-Caseína | Beta-Caseína | EFI | Birth Date | Prova",
+            language="text"
+        )
+
+    with st.expander("📄 Colunas da aba **progenies**"):
+        st.code(
+            "id_progenie | id_touro_pai | nome | data_nascimento |\n"
+            "proprietario | leite_lts | Classificação |\n"
+            "fotos_ids | youtube_url",
+            language="text"
+        )
+        st.caption(
+            "💡 **fotos_ids**: IDs do Drive separados por vírgula  \n"
+            "💡 **youtube_url**: link completo do YouTube  \n"
+            "Ex: https://www.youtube.com/watch?v=XXXXXXXXXXX"
+        )
 
 
 # ══════════════════════════════════════════════════════════════
