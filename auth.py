@@ -1,133 +1,79 @@
-# auth.py
+# auth.py — versão simplificada compatível com secrets.toml sem Service Account
 import streamlit as st
 import bcrypt
+from typing import Tuple
 
-# ── Verificação defensiva dos secrets ────────────────────────────────────────
-def _validate_secrets() -> bool:
-    """
-    Verifica se todos os secrets necessários estão configurados.
-    Retorna False com mensagem de erro se algum estiver faltando.
-    """
-    required_keys = {
-        "admin_credentials": ["usernames"],
-        "sheets": ["sheet_id"],
-        "gcp_service_account": ["type", "project_id", "private_key", "client_email"],
-    }
-
-    for section, keys in required_keys.items():
-        # Verifica se a seção existe
-        if section not in st.secrets:
-            st.error(f"❌ Secret ausente: `[{section}]` não encontrado no secrets.toml")
-            return False
-
-        # Verifica se as chaves dentro da seção existem
-        for key in keys:
-            if key not in st.secrets[section]:
-                st.error(f"❌ Secret ausente: `[{section}]` → `{key}` não encontrado")
-                return False
-
-    return True
-
-
-def _verify_password(plain_password: str, hashed_password: str) -> bool:
+def _verify_password(plain: str, hashed: str) -> bool:
     """Verifica senha contra hash bcrypt."""
     try:
         return bcrypt.checkpw(
-            plain_password.encode("utf-8"),
-            hashed_password.encode("utf-8")
+            plain.encode("utf-8"),
+            hashed.encode("utf-8")
         )
     except Exception:
         return False
 
 
-def get_admin_users() -> dict:
+def render_admin_login() -> Tuple[bool, Optional[str]]:
     """
-    Retorna dicionário de usuários admin dos secrets.
-    Formato esperado no secrets.toml:
-        [admin_credentials.usernames.joao]
-        name = "João Silva"
-        password = "$2b$12$..."
+    Renderiza login admin na sidebar.
+    Retorna (is_admin, username).
     """
-    try:
-        return dict(st.secrets["admin_credentials"]["usernames"])
-    except KeyError as e:
-        st.error(f"❌ Erro ao carregar usuários: {e}")
-        return {}
-
-
-def render_admin_login() -> tuple[bool, str | None]:
-    """
-    Renderiza o formulário de login na sidebar.
-
-    Returns:
-        tuple: (is_admin: bool, username: str | None)
-    """
-    # Inicializa session_state de forma segura
-    if "is_admin" not in st.session_state:
+    # Inicializa session_state
+    if "is_admin"       not in st.session_state:
         st.session_state.is_admin = False
-    if "admin_user" not in st.session_state:
+    if "admin_user"     not in st.session_state:
         st.session_state.admin_user = None
     if "login_attempts" not in st.session_state:
         st.session_state.login_attempts = 0
 
-    # Se já está autenticado, retorna direto
+    # Já autenticado
     if st.session_state.is_admin:
         return True, st.session_state.admin_user
 
-    # Valida secrets antes de tentar qualquer coisa
-    if not _validate_secrets():
-        st.sidebar.error("⚙️ Secrets não configurados. Contate o administrador.")
+    # Verifica se admin_credentials existe nos secrets
+    if "admin_credentials" not in st.secrets:
+        # Sem bloco admin nos secrets = sem login admin
+        # O app funciona normalmente em modo público
         return False, None
 
     with st.sidebar:
         st.divider()
         st.subheader("🔐 Área Administrativa")
 
-        # Bloqueia após 5 tentativas
-        MAX_ATTEMPTS = 5
-        if st.session_state.login_attempts >= MAX_ATTEMPTS:
-            st.error(f"🔒 Muitas tentativas. Recarregue a página.")
+        MAX = 5
+        if st.session_state.login_attempts >= MAX:
+            st.error("🔒 Muitas tentativas. Recarregue a página.")
             return False, None
 
-        with st.form(key="login_form", clear_on_submit=True):
-            username = st.text_input(
-                "Usuário",
-                placeholder="seu.usuario",
-                autocomplete="username"
-            )
-            password = st.text_input(
-                "Senha",
-                type="password",
-                placeholder="••••••••",
-                autocomplete="current-password"
-            )
-            submitted = st.form_submit_button(
-                "🔑 Entrar",
-                use_container_width=True
-            )
+        with st.form("form_login", clear_on_submit=True):
+            username = st.text_input("Usuário", placeholder="admin1")
+            password = st.text_input("Senha", type="password")
+            entrar   = st.form_submit_button("🔑 Entrar", use_container_width=True)
 
-        if submitted:
+        if entrar:
             if not username or not password:
-                st.warning("⚠️ Preencha usuário e senha.")
+                st.warning("Preencha usuário e senha.")
                 return False, None
 
-            users = get_admin_users()
+            try:
+                users = st.secrets["admin_credentials"]["usernames"]
+            except KeyError:
+                st.error("❌ Configuração de admin inválida no secrets.")
+                return False, None
 
             if username in users:
-                user_data = dict(users[username])
-                stored_hash = user_data.get("password", "")
+                stored_hash = users[username].get("password", "")
 
                 if _verify_password(password, stored_hash):
-                    # Login bem-sucedido
-                    st.session_state.is_admin = True
-                    st.session_state.admin_user = username
+                    st.session_state.is_admin   = True
+                    st.session_state.admin_user  = username
                     st.session_state.login_attempts = 0
-                    st.success(f"✅ Bem-vindo, {user_data.get('name', username)}!")
                     st.rerun()
                 else:
                     st.session_state.login_attempts += 1
-                    remaining = MAX_ATTEMPTS - st.session_state.login_attempts
-                    st.error(f"❌ Credenciais inválidas. {remaining} tentativa(s) restantes.")
+                    restantes = MAX - st.session_state.login_attempts
+                    st.error(f"❌ Senha incorreta. {restantes} tentativa(s) restantes.")
             else:
                 st.session_state.login_attempts += 1
                 st.error("❌ Usuário não encontrado.")
@@ -136,14 +82,13 @@ def render_admin_login() -> tuple[bool, str | None]:
 
 
 def render_admin_logout():
-    """Botão de logout para admins autenticados."""
+    """Botão de logout para sidebar."""
     with st.sidebar:
         st.divider()
-        user = st.session_state.get("admin_user", "Admin")
+        user = st.session_state.get("admin_user", "admin")
         st.caption(f"👤 Logado como: **{user}**")
-
         if st.button("🚪 Sair", use_container_width=True):
-            st.session_state.is_admin = False
+            st.session_state.is_admin   = False
             st.session_state.admin_user = None
             st.session_state.login_attempts = 0
             st.rerun()
